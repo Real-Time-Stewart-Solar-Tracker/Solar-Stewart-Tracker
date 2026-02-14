@@ -1,4 +1,5 @@
 #pragma once
+#ifdef __linux__
 
 #include <atomic>
 #include <condition_variable>
@@ -67,3 +68,4 @@ private:
 };
 
 } // namespace solar
+#endif
