@@ -19,6 +19,7 @@ Kinematics3RRS::Config Kinematics3RRS::config() const {
 
 void Kinematics3RRS::onSetpoint(const PlatformSetpoint& sp) {
     ActuatorCommand cmd;
+    cmd.frame_id = sp.frame_id;
     cmd.t_actuate = std::chrono::steady_clock::now();
 
     const float tilt = sp.tilt_rad;
