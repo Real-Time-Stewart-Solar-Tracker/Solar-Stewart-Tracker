@@ -18,6 +18,7 @@ Controller::Config Controller::config() const {
 
 void Controller::onEstimate(const SunEstimate& est) {
     PlatformSetpoint sp;
+    sp.frame_id = est.frame_id;
     sp.t_control = std::chrono::steady_clock::now();
     sp.tilt_rad = 0.0f;
     sp.pan_rad = 0.0f;
