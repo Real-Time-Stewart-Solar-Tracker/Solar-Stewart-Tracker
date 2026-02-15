@@ -51,12 +51,12 @@ struct SunEstimate {
  * Desired platform orientation computed by controller.
  */
 struct PlatformSetpoint {
+    uint64_t frame_id{0};
     std::chrono::steady_clock::time_point t_control;
 
     float tilt_rad{0.0f};
     float pan_rad{0.0f};
 };
-
 
 /**
  * ActuatorCommand
@@ -64,7 +64,9 @@ struct PlatformSetpoint {
  * Output of kinematics layer.
  * Contains three actuator target values.
  */
+
 struct ActuatorCommand {
+    uint64_t frame_id{0};
     std::chrono::steady_clock::time_point t_actuate;
 
     std::array<float, 3> actuator_targets{0.0f, 0.0f, 0.0f};
