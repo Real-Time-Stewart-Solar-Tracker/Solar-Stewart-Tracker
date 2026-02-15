@@ -1,11 +1,13 @@
 #pragma once
 
 #include <cstdint>
+#include <cstddef>
 #include <functional>
 
 #include "common/Logger.hpp"
 #include "common/Types.hpp"
 
+namespace solar { class Logger; }
 namespace solar {
 
 /**
@@ -22,7 +24,7 @@ namespace solar {
  *
  * Notes:
  * - Pure processing logic (no threads inside)
- * - Designed for event-driven pipeline: onFrame(...) called from camera callback thread
+ * - Designed for event-driven pipeline: onFrame(...) called when a frame arrives
  */
 class SunTracker {
 public:

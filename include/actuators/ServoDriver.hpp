@@ -5,6 +5,7 @@
 #include "common/Logger.hpp"
 #include "common/Types.hpp"
 
+namespace solar { class Logger; }
 namespace solar {
 
 /**

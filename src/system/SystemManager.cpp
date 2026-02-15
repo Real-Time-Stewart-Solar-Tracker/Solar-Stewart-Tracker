@@ -1,5 +1,5 @@
 #include "system/SystemManager.hpp"
-
+#include "common/Logger.hpp"
 #include <utility>
 
 namespace solar {

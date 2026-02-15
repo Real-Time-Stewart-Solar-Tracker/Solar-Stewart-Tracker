@@ -9,7 +9,7 @@
 #include "control/Kinematics3RRS.hpp"
 #include "sensors/ICamera.hpp"
 #include "vision/SunTracker.hpp"
-
+namespace solar { class Logger; }
 namespace solar {
 
 /**

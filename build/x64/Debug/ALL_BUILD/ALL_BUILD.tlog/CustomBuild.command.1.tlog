@@ -1,0 +1,10 @@
+^C:\USERS\FADIH\ONEDRIVE\DESKTOP\EMBEDED PROJECT\CMAKELISTS.TXT
+setlocal
+"C:\Program Files\CMake\bin\cmake.exe" "-SC:/Users/fadih/OneDrive/Desktop/Embeded project" "-BC:/Users/fadih/OneDrive/Desktop/Embeded project/build" --check-stamp-file "C:/Users/fadih/OneDrive/Desktop/Embeded project/build/CMakeFiles/generate.stamp"
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

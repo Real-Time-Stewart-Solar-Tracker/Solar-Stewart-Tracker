@@ -1,0 +1,46 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="18.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="C:\Users\fadih\OneDrive\Desktop\Embeded project\src\actuators\ActuatorManager.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\fadih\OneDrive\Desktop\Embeded project\src\actuators\ServoDriver.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\fadih\OneDrive\Desktop\Embeded project\src\common\Logger.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\fadih\OneDrive\Desktop\Embeded project\src\control\Controller.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\fadih\OneDrive\Desktop\Embeded project\src\control\Kinematics3RRS.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\fadih\OneDrive\Desktop\Embeded project\src\main.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\fadih\OneDrive\Desktop\Embeded project\src\sensors\CameraPublisher.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\fadih\OneDrive\Desktop\Embeded project\src\sensors\LibcameraPublisher.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\fadih\OneDrive\Desktop\Embeded project\src\sensors\SimulatedPublisher.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\fadih\OneDrive\Desktop\Embeded project\src\system\SystemManager.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\fadih\OneDrive\Desktop\Embeded project\src\vision\SunTracker.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="C:\Users\fadih\OneDrive\Desktop\Embeded project\CMakeLists.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{674AEC1E-2821-35E0-AE8A-0E4612E2A8F8}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

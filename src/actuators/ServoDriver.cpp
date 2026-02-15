@@ -1,5 +1,5 @@
 #include "actuators/ServoDriver.hpp"
-
+#include "common/Logger.hpp"
 #include <algorithm>
 #include <string>
 

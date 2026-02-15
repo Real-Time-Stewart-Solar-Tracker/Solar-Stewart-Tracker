@@ -1,0 +1,3 @@
+C:/Users/fadih/OneDrive/Desktop/Embeded project/build/CMakeFiles/solar_tracker.dir
+C:/Users/fadih/OneDrive/Desktop/Embeded project/build/CMakeFiles/ALL_BUILD.dir
+C:/Users/fadih/OneDrive/Desktop/Embeded project/build/CMakeFiles/ZERO_CHECK.dir

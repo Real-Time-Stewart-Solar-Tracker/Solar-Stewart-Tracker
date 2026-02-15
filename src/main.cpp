@@ -66,7 +66,7 @@ int main() {
     // -------------------------------
 
     SunTracker::Config trackerCfg;
-    trackerCfg.threshold = 200;
+    trackerCfg.threshold = 50;
 
     Controller::Config controllerCfg;
     controllerCfg.width = 640;
