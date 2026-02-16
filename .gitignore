@@ -1,0 +1,47 @@
+# =========================
+# Build directories
+# =========================
+build/
+cmake-build-*/
+out/
+CMakeFiles/
+Testing/
+
+# =========================
+# CMake generated files
+# =========================
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+CTestTestfile.cmake
+
+# =========================
+# Compiled objects & binaries
+# =========================
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.a
+*.lib
+*.pdb
+
+# =========================
+# Logs
+# =========================
+*.log
+
+# =========================
+# Visual Studio / VSCode
+# =========================
+.vs/
+.vscode/
+*.user
+*.suo
+
+# =========================
+# OS files
+# =========================
+.DS_Store
+Thumbs.db
