@@ -3,16 +3,16 @@
 #include <iostream>
 #include <memory>
 #include <thread>
-#include "common/LatencyMonitor.hpp"
+
 #include "actuators/ServoDriver.hpp"
 #include "common/Logger.hpp"
 #include "control/Controller.hpp"
 #include "control/Kinematics3RRS.hpp"
 #include "sensors/ICamera.hpp"
-#include "vision/SunTracker.hpp"
 #include "system/SystemManager.hpp"
+#include "vision/SunTracker.hpp"
 
-#ifdef __linux__
+#if defined(__linux__) && defined(HAVE_LIBCAMERA)
 #include "sensors/LibcameraPublisher.hpp"
 #endif
 
@@ -38,7 +38,7 @@ int main() {
     // -------------------------------
     std::unique_ptr<ICamera> camera;
 
-#ifdef __linux__
+#if defined(__linux__) && defined(HAVE_LIBCAMERA)
     {
         LibcameraPublisher::Config camCfg;
         camCfg.width = 640;
@@ -64,7 +64,6 @@ int main() {
     // -------------------------------
     // Module configurations
     // -------------------------------
-
     SunTracker::Config trackerCfg;
     trackerCfg.threshold = 50;
 
@@ -73,15 +72,12 @@ int main() {
     controllerCfg.height = 480;
 
     Kinematics3RRS::Config kinCfg;
-
     ActuatorManager::Config actCfg;
-
     ServoDriver::Config drvCfg;
 
     // -------------------------------
     // Build system
     // -------------------------------
-
     SystemManager system(
         log,
         std::move(camera),
