@@ -1,3 +1,5 @@
+#include "test_common.hpp"
+
 #include "vision/SunTracker.hpp"
 #include "common/Types.hpp"
 #include "common/Logger.hpp"
@@ -5,17 +7,6 @@
 #include <chrono>
 #include <cstdint>
 #include <vector>
-
-// Use the macros from test_main.cpp
-// (They are in the same test executable)
-#define TEST(name) void name(); static Register reg_##name(#name, name); void name()
-#define REQUIRE(cond) do{ if(!(cond)) throw std::runtime_error("REQUIRE failed: " #cond);}while(0)
-#define REQUIRE_NEAR(a,b,eps) do{ auto _a=(a); auto _b=(b); auto _e=(eps); if(!(_a>=_b-_e && _a<=_b+_e)) throw std::runtime_error("REQUIRE_NEAR failed"); }while(0)
-
-// Forward decls from test_main.cpp registry (link-time shared)
-struct Register {
-    Register(const std::string& name, std::function<void()> fn);
-};
 
 using namespace solar;
 
@@ -36,12 +27,18 @@ static void drawSpot(FrameEvent& fe, int cx, int cy, int r, uint8_t val) {
 
     for (int y = cy - r; y <= cy + r; ++y) {
         if (y < 0 || y >= h) continue;
+
         for (int x = cx - r; x <= cx + r; ++x) {
             if (x < 0 || x >= w) continue;
+
             const int dx = x - cx;
             const int dy = y - cy;
+
             if (dx * dx + dy * dy <= r2) {
-                fe.data[static_cast<std::size_t>(y) * static_cast<std::size_t>(w) + static_cast<std::size_t>(x)] = val;
+                fe.data[
+                    static_cast<std::size_t>(y) * static_cast<std::size_t>(w)
+                    + static_cast<std::size_t>(x)
+                ] = val;
             }
         }
     }
@@ -49,6 +46,7 @@ static void drawSpot(FrameEvent& fe, int cx, int cy, int r, uint8_t val) {
 
 TEST(SunTracker_NoBrightPixels_ConfidenceZero) {
     Logger log;
+
     SunTracker::Config cfg;
     cfg.threshold = 200;
     cfg.min_pixels = 10;
@@ -57,12 +55,13 @@ TEST(SunTracker_NoBrightPixels_ConfidenceZero) {
 
     SunEstimate out;
     bool got = false;
+
     trk.registerEstimateCallback([&](const SunEstimate& e) {
         out = e;
         got = true;
     });
 
-    auto fe = makeFrame(64, 48, 50); // all below threshold
+    auto fe = makeFrame(64, 48, 50);  // below threshold
     trk.onFrame(fe);
 
     REQUIRE(got);
@@ -71,6 +70,7 @@ TEST(SunTracker_NoBrightPixels_ConfidenceZero) {
 
 TEST(SunTracker_BrightSpot_CentroidApproxCorrect) {
     Logger log;
+
     SunTracker::Config cfg;
     cfg.threshold = 200;
     cfg.min_pixels = 10;
@@ -79,6 +79,7 @@ TEST(SunTracker_BrightSpot_CentroidApproxCorrect) {
 
     SunEstimate out;
     bool got = false;
+
     trk.registerEstimateCallback([&](const SunEstimate& e) {
         out = e;
         got = true;
@@ -97,6 +98,7 @@ TEST(SunTracker_BrightSpot_CentroidApproxCorrect) {
 
 TEST(SunTracker_BrightSpot_HigherAreaHigherConfidence) {
     Logger log;
+
     SunTracker::Config cfg;
     cfg.threshold = 200;
     cfg.min_pixels = 10;
@@ -104,11 +106,12 @@ TEST(SunTracker_BrightSpot_HigherAreaHigherConfidence) {
 
     SunTracker trk(log, cfg);
 
-    SunEstimate a, b;
+    SunEstimate small, large;
     int count = 0;
+
     trk.registerEstimateCallback([&](const SunEstimate& e) {
-        if (count == 0) a = e;
-        else b = e;
+        if (count == 0) small = e;
+        else large = e;
         count++;
     });
 
@@ -125,5 +128,5 @@ TEST(SunTracker_BrightSpot_HigherAreaHigherConfidence) {
     trk.onFrame(fe2);
 
     REQUIRE(count == 2);
-    REQUIRE(b.confidence >= a.confidence);
+    REQUIRE(large.confidence >= small.confidence);
 }
