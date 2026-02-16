@@ -7,6 +7,9 @@
     <ClCompile Include="C:\Users\fadih\OneDrive\Desktop\Embeded project\src\actuators\ServoDriver.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="C:\Users\fadih\OneDrive\Desktop\Embeded project\src\common\LatencyMonitor.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="C:\Users\fadih\OneDrive\Desktop\Embeded project\src\common\Logger.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>

@@ -1,5 +1,6 @@
 C:\Users\fadih\OneDrive\Desktop\Embeded project\src\actuators\ActuatorManager.cpp;C:\Users\fadih\OneDrive\Desktop\Embeded project\build\solar_tracker.dir\Debug\ActuatorManager.obj
 C:\Users\fadih\OneDrive\Desktop\Embeded project\src\actuators\ServoDriver.cpp;C:\Users\fadih\OneDrive\Desktop\Embeded project\build\solar_tracker.dir\Debug\ServoDriver.obj
+C:\Users\fadih\OneDrive\Desktop\Embeded project\src\common\LatencyMonitor.cpp;C:\Users\fadih\OneDrive\Desktop\Embeded project\build\solar_tracker.dir\Debug\LatencyMonitor.obj
 C:\Users\fadih\OneDrive\Desktop\Embeded project\src\common\Logger.cpp;C:\Users\fadih\OneDrive\Desktop\Embeded project\build\solar_tracker.dir\Debug\Logger.obj
 C:\Users\fadih\OneDrive\Desktop\Embeded project\src\control\Controller.cpp;C:\Users\fadih\OneDrive\Desktop\Embeded project\build\solar_tracker.dir\Debug\Controller.obj
 C:\Users\fadih\OneDrive\Desktop\Embeded project\src\control\Kinematics3RRS.cpp;C:\Users\fadih\OneDrive\Desktop\Embeded project\build\solar_tracker.dir\Debug\Kinematics3RRS.obj

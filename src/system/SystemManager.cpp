@@ -1,6 +1,7 @@
 #include "system/SystemManager.hpp"
 #include "common/Logger.hpp"
 #include <utility>
+#include "common/LatencyMonitor.hpp"
 
 namespace solar {
 
@@ -17,23 +18,27 @@ SystemManager::SystemManager(Logger& log,
       controller_(log_, controllerCfg),
       kinematics_(log_, kinCfg),
       actuatorMgr_(log_, actCfg),
-      driver_(log_, drvCfg) {
+      driver_(log_, drvCfg),
+      latency_(log_) {
     // Wire pipeline callbacks
 
     // Camera -> SunTracker
     if (camera_) {
         camera_->registerFrameCallback([this](const FrameEvent& fe) {
+            latency_.onCapture(fe.frame_id, fe.t_capture);
             tracker_.onFrame(fe);
         });
     }
 
     // SunTracker -> Controller
     tracker_.registerEstimateCallback([this](const SunEstimate& est) {
+        latency_.onEstimate(est.frame_id, est.t_estimate);
         controller_.onEstimate(est);
     });
 
     // Controller -> Kinematics
     controller_.registerSetpointCallback([this](const PlatformSetpoint& sp) {
+        latency_.onControl(sp.frame_id, sp.t_control);
         kinematics_.onSetpoint(sp);
     });
 
@@ -44,6 +49,7 @@ SystemManager::SystemManager(Logger& log,
 
     // ActuatorManager -> ServoDriver
     actuatorMgr_.registerSafeCommandCallback([this](const ActuatorCommand& safeCmd) {
+        latency_.onActuate(safeCmd.frame_id, safeCmd.t_actuate);
         driver_.apply(safeCmd);
     });
 }
@@ -88,6 +94,7 @@ void SystemManager::stop() {
     driver_.stop();
 
     running_ = false;
+    latency_.printSummary();
     log_.info("SystemManager stopped");
 }
 

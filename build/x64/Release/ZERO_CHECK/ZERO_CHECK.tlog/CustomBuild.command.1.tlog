@@ -1,0 +1,10 @@
+^C:\USERS\FADIH\ONEDRIVE\DESKTOP\EMBEDED PROJECT\BUILD\CMAKEFILES\A5CF4E3B76AC8A7E4299F685B16D4518\GENERATE.STAMP.RULE
+setlocal
+"C:\Program Files\CMake\bin\cmake.exe" "-SC:/Users/fadih/OneDrive/Desktop/Embeded project" "-BC:/Users/fadih/OneDrive/Desktop/Embeded project/build" --check-stamp-list CMakeFiles/generate.stamp.list --vs-solution-file "C:/Users/fadih/OneDrive/Desktop/Embeded project/build/SolarStewartTracker.slnx"
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

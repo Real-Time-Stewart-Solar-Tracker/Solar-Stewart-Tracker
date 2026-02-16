@@ -19,12 +19,12 @@ std::vector<Test>& registry() {
     return r;
 }
 
-// Implement the Register declared in test_common.hpp
+} // namespace
+
+// ✅ Define Register declared in test_common.hpp (global scope)
 Register::Register(const std::string& name, std::function<void()> fn) {
     registry().push_back(Test{name, std::move(fn)});
 }
-
-} // namespace
 
 int main() {
     int failed = 0;

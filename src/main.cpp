@@ -3,7 +3,7 @@
 #include <iostream>
 #include <memory>
 #include <thread>
-
+#include "common/LatencyMonitor.hpp"
 #include "actuators/ServoDriver.hpp"
 #include "common/Logger.hpp"
 #include "control/Controller.hpp"

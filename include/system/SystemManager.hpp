@@ -1,15 +1,16 @@
 #pragma once
 
 #include <memory>
-
 #include "actuators/ActuatorManager.hpp"
+#include "common/LatencyMonitor.hpp"
 #include "actuators/ServoDriver.hpp"
 #include "common/Logger.hpp"
 #include "control/Controller.hpp"
 #include "control/Kinematics3RRS.hpp"
 #include "sensors/ICamera.hpp"
 #include "vision/SunTracker.hpp"
-namespace solar { class Logger; }
+namespace solar {
+class LatencyMonitor;}
 namespace solar {
 
 /**
@@ -55,7 +56,7 @@ private:
     Kinematics3RRS kinematics_;
     ActuatorManager actuatorMgr_;
     ServoDriver driver_;
-
+    LatencyMonitor latency_;
     bool running_{false};
 };
 
