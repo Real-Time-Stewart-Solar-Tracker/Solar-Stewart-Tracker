@@ -5,15 +5,11 @@
 #include "common/Logger.hpp"
 
 #include <chrono>
+#include <cmath>
 
 using namespace solar;
 
-static SunEstimate makeEstimate(
-    uint64_t id,
-    float cx,
-    float cy,
-    float confidence)
-{
+static SunEstimate makeEstimate(uint64_t id, float cx, float cy, float confidence) {
     SunEstimate e;
     e.frame_id = id;
     e.t_estimate = std::chrono::steady_clock::now();
@@ -29,19 +25,18 @@ TEST(Controller_LowConfidence_NoMotion) {
     Controller::Config cfg;
     cfg.width = 640;
     cfg.height = 480;
-    cfg.confidence_threshold = 0.5f;
+    cfg.min_confidence = 0.5f;
 
     Controller ctrl(log, cfg);
 
     PlatformSetpoint out;
     bool got = false;
-
     ctrl.registerSetpointCallback([&](const PlatformSetpoint& sp) {
         out = sp;
         got = true;
     });
 
-    auto est = makeEstimate(1, 320.0f, 240.0f, 0.1f); // low confidence
+    auto est = makeEstimate(1, 320.0f, 240.0f, 0.1f);
     ctrl.onEstimate(est);
 
     REQUIRE(got);
@@ -49,26 +44,26 @@ TEST(Controller_LowConfidence_NoMotion) {
     REQUIRE(out.pan_rad == 0.0f);
 }
 
-TEST(Controller_CenterDeadband_NoMotion) {
+TEST(Controller_WithinDeadband_NoMotion) {
     Logger log;
 
     Controller::Config cfg;
     cfg.width = 640;
     cfg.height = 480;
-    cfg.deadband_px = 10.0f;
+    cfg.min_confidence = 0.0f;
+    cfg.deadband = 0.05f; // normalized deadband
 
     Controller ctrl(log, cfg);
 
     PlatformSetpoint out;
     bool got = false;
-
     ctrl.registerSetpointCallback([&](const PlatformSetpoint& sp) {
         out = sp;
         got = true;
     });
 
-    // Slightly off center but within deadband
-    auto est = makeEstimate(2, 325.0f, 243.0f, 1.0f);
+    // Center is (320,240). Small shift: 10px/320 = 0.03125 (within 0.05 deadband)
+    auto est = makeEstimate(2, 330.0f, 245.0f, 1.0f);
     ctrl.onEstimate(est);
 
     REQUIRE(got);
@@ -82,26 +77,27 @@ TEST(Controller_OutsideDeadband_ProducesMotion) {
     Controller::Config cfg;
     cfg.width = 640;
     cfg.height = 480;
-    cfg.deadband_px = 5.0f;
-    cfg.kp = 0.01f;
+    cfg.min_confidence = 0.0f;
+    cfg.deadband = 0.01f;
+    cfg.k_pan = 0.8f;
+    cfg.k_tilt = 0.8f;
 
     Controller ctrl(log, cfg);
 
     PlatformSetpoint out;
     bool got = false;
-
     ctrl.registerSetpointCallback([&](const PlatformSetpoint& sp) {
         out = sp;
         got = true;
     });
 
-    // Far from center
+    // Far from center: 80px/320=0.25 normalized error -> should produce non-zero output
     auto est = makeEstimate(3, 400.0f, 300.0f, 1.0f);
     ctrl.onEstimate(est);
 
     REQUIRE(got);
-    REQUIRE(out.tilt_rad != 0.0f);
     REQUIRE(out.pan_rad != 0.0f);
+    REQUIRE(out.tilt_rad != 0.0f);
 }
 
 TEST(Controller_OutputClamped) {
@@ -110,14 +106,19 @@ TEST(Controller_OutputClamped) {
     Controller::Config cfg;
     cfg.width = 640;
     cfg.height = 480;
-    cfg.kp = 1.0f;             // large gain
-    cfg.max_angle_rad = 0.2f;  // clamp
+    cfg.min_confidence = 0.0f;
+    cfg.deadband = 0.0f;
+
+    // Big gains + small limits to force clamping
+    cfg.k_pan = 100.0f;
+    cfg.k_tilt = 100.0f;
+    cfg.max_pan_rad = 0.2f;
+    cfg.max_tilt_rad = 0.2f;
 
     Controller ctrl(log, cfg);
 
     PlatformSetpoint out;
     bool got = false;
-
     ctrl.registerSetpointCallback([&](const PlatformSetpoint& sp) {
         out = sp;
         got = true;
@@ -127,6 +128,6 @@ TEST(Controller_OutputClamped) {
     ctrl.onEstimate(est);
 
     REQUIRE(got);
-    REQUIRE(out.tilt_rad <= 0.2f);
-    REQUIRE(out.pan_rad <= 0.2f);
+    REQUIRE(std::fabs(out.pan_rad) <= 0.2f);
+    REQUIRE(std::fabs(out.tilt_rad) <= 0.2f);
 }
