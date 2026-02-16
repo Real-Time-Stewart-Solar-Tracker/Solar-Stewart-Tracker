@@ -12,24 +12,65 @@ else()
     add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
-# Include directory
-include_directories(include)
-
-# Collect sources
-file(GLOB_RECURSE SOURCES
+# -----------------------------
+# Core library (all sources except main + optional libcamera)
+# -----------------------------
+file(GLOB_RECURSE CORE_SOURCES
     src/*.cpp
 )
 
-add_executable(solar_tracker ${SOURCES})
+# Exclude entry point (only belongs to the app)
+list(FILTER CORE_SOURCES EXCLUDE REGEX ".*main\\.cpp$")
 
-# Linux-specific: link libcamera only if building on Linux
+# Exclude libcamera implementation by default (optional later)
+list(FILTER CORE_SOURCES EXCLUDE REGEX ".*LibcameraPublisher\\.cpp$")
+
+add_library(solar_tracker_core STATIC ${CORE_SOURCES})
+target_include_directories(solar_tracker_core PUBLIC include)
+
+# -----------------------------
+# Optional: libcamera support (Linux only, when available)
+# -----------------------------
 if(UNIX AND NOT APPLE)
-    find_package(PkgConfig REQUIRED)
-    pkg_check_modules(LIBCAMERA libcamera)
-
-    if(LIBCAMERA_FOUND)
-        target_include_directories(solar_tracker PRIVATE ${LIBCAMERA_INCLUDE_DIRS})
-        target_link_libraries(solar_tracker ${LIBCAMERA_LIBRARIES})
-        target_compile_options(solar_tracker PRIVATE ${LIBCAMERA_CFLAGS_OTHER})
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(LIBCAMERA QUIET libcamera)
+        if(LIBCAMERA_FOUND)
+            target_sources(solar_tracker_core PRIVATE src/sensors/LibcameraPublisher.cpp)
+            target_include_directories(solar_tracker_core PRIVATE ${LIBCAMERA_INCLUDE_DIRS})
+            target_link_libraries(solar_tracker_core PRIVATE ${LIBCAMERA_LIBRARIES})
+            target_compile_options(solar_tracker_core PRIVATE ${LIBCAMERA_CFLAGS_OTHER})
+            target_compile_definitions(solar_tracker_core PRIVATE SOLAR_HAVE_LIBCAMERA=1)
+        else()
+            target_compile_definitions(solar_tracker_core PRIVATE SOLAR_HAVE_LIBCAMERA=0)
+        endif()
+    else()
+        target_compile_definitions(solar_tracker_core PRIVATE SOLAR_HAVE_LIBCAMERA=0)
     endif()
+else()
+    target_compile_definitions(solar_tracker_core PRIVATE SOLAR_HAVE_LIBCAMERA=0)
 endif()
+
+# -----------------------------
+# Main executable
+# -----------------------------
+add_executable(solar_tracker src/main.cpp)
+target_link_libraries(solar_tracker PRIVATE solar_tracker_core)
+
+# -----------------------------
+# Tests
+# -----------------------------
+enable_testing()
+
+set(TEST_SOURCES
+    tests/test_main.cpp
+    tests/test_common.hpp
+    tests/test_suntracker.cpp
+    tests/test_controller.cpp
+)
+
+add_executable(solar_tracker_tests ${TEST_SOURCES})
+target_include_directories(solar_tracker_tests PRIVATE include tests)
+target_link_libraries(solar_tracker_tests PRIVATE solar_tracker_core)
+
+add_test(NAME solar_tracker_unit_tests COMMAND solar_tracker_tests)
