@@ -1,16 +1,12 @@
 /**
  * @file test_pid.cpp
- * @brief PIDController Unit Tests / PIDController 单元测试
- *
- * Uses Google Test framework to verify PID controller core functionality.
- * 使用 Google Test 框架验证 PID 控制器的核心功能。
+ * @brief PIDController 单元测试 / PIDController Unit Tests
  */
 
 #include "pid_controller.hpp"
 #include <cmath>
 #include <gtest/gtest.h>
 #include <memory>
-
 
 class PIDControllerTest : public ::testing::Test {
 protected:

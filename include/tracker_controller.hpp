@@ -13,36 +13,13 @@
 #include <vector>
 
 /**
- * @brief Tracker Controller - Event-driven architecture core
- *        追踪控制器 — 事件驱动架构核心
+ * @brief Tracker Controller / 追踪控制器
  *
- * Design principles (SOLID) / 设计原则:
- * - SRP: Only responsible for coordinating Vision→PID→IK→Servo control flow
- *   单一职责: 仅负责协调视觉→PID→IK→舵机的控制流程
- * - DIP: Depends on IServoDriver / IKinematicsSolver / IVisionSource
- * abstractions 依赖倒置: 依赖抽象接口而非具体实现
- * - OCP: Extensible by injecting different interface implementations
- *   开闭原则: 可通过注入不同的接口实现来扩展功能
+ * Coordinates Vision → PID → IK → Servo control pipeline.
+ * 协调 视觉 → PID → IK → 舵机 控制流水线。
  *
- * Real-time architecture / 实时架构设计:
- * - Vision system pushes detection results via callback (event-driven, no
- * polling) 视觉系统通过回调推送检测结果（事件驱动，非轮询）
- * - Timer thread uses condition_variable::wait_for for precise 50Hz control
- *   定时器线程使用 condition_variable::wait_for 实现精确50Hz控制频率
- * - Callback chain: Vision → onVisionUpdate() → PID → IK → Servo
- *   回调链: Vision → onVisionUpdate() → PID → IK → Servo
- * - Main thread only waits for exit signal, zero polling
- *   主线程仅等待退出信号，零轮询
- *
- * Latency analysis / 延迟分析:
- * - Camera capture frame rate: 30fps → ~33ms per frame
- *   摄像头采集帧率: 30fps → 帧间隔 ~33ms
- * - Vision processing (HSV + contours): ~5ms
- *   视觉处理（HSV+轮廓）: ~5ms
- * - PID + IK computation: ~0.1ms / PID + IK计算: ~0.1ms
- * - I2C servo communication: ~1ms / I2C舵机通信: ~1ms
- * - End-to-end latency: ~39ms (meets real-time tracking requirements)
- *   端到端延迟: ~39ms（满足实时追踪需求）
+ * Uses callback from VisionSystem and a 50Hz timer thread for control loop.
+ * 使用 VisionSystem 的回调和 50Hz 定时器线程进行控制循环。
  */
 class TrackerController {
 public:

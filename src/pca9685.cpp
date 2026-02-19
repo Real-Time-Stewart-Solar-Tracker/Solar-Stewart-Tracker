@@ -41,12 +41,12 @@ PCA9685::~PCA9685() { close(); }
 
 PCA9685::PCA9685(PCA9685 &&other) noexcept
     : fd_(other.fd_), address_(other.address_), period_us_(other.period_us_) {
-  other.fd_ = -1; // Transfer resource ownership / 转移资源所有权
+  other.fd_ = -1;
 }
 
 PCA9685 &PCA9685::operator=(PCA9685 &&other) noexcept {
   if (this != &other) {
-    close(); // Release own resources first / 先释放自己的资源
+    close();
     fd_ = other.fd_;
     address_ = other.address_;
     period_us_ = other.period_us_;
@@ -115,15 +115,8 @@ void PCA9685::setServoAngle(int channel, int degree) {
 
 void PCA9685::close() {
   if (fd_ >= 0) {
-    // Turn off all channels / 关闭所有通道
-    for (int ch = 0; ch < 3; ch++) {
-      try {
-        setPWM(ch, 0, 0);
-      } catch (const std::exception &e) {
-        std::cerr << "[PCA9685] Error closing channel / 关闭通道" << ch
-                  << "时出错: " << e.what() << std::endl;
-      }
-    }
+    // 仅关闭 I2C，不清零 PWM，让舵机保持最后位置
+    // Only close I2C fd, keep PWM output so servos hold position
     ::close(fd_);
     fd_ = -1;
   }

@@ -5,17 +5,10 @@
 #include <cstdint>
 
 /**
- * @brief PCA9685 PWM servo driver class / PCA9685 PWM舵机驱动类
+ * @brief PCA9685 PWM servo driver / PCA9685 PWM舵机驱动
  *
- * Controls PCA9685 chip via I2C interface to drive servos.
- * Implements IServoDriver interface (LSP: can be replaced by other servo
- * driver). 通过I2C接口控制PCA9685芯片，驱动舵机。 实现 IServoDriver 接口（LSP:
- * 可替换为其他舵机驱动实现）。
- *
- * RAII design: constructor acquires I2C resource, destructor auto-releases.
- * Move-only: copy disabled, move semantics supported.
- * RAII设计：构造函数获取I2C资源，析构函数自动释放。
- * Move-only：禁止拷贝，支持移动语义。
+ * Controls PCA9685 via I2C to drive servos.
+ * 通过I2C控制PCA9685芯片驱动舵机。
  */
 class PCA9685 : public IServoDriver {
 public:

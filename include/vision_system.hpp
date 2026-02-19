@@ -9,26 +9,12 @@
 #include <vector>
 
 /**
- * @brief Vision System class / 视觉系统类
+ * @brief Vision System / 视觉系统
  *
- * Implements IVisionSource interface (DIP).
- * Uses OpenCV for HSV color detection and target tracking.
- * 实现 IVisionSource 接口，使用OpenCV进行HSV颜色检测和目标追踪。
- *
- * Event-driven design / 事件驱动设计:
- * - Capture thread runs in background, notifies controller via callback
- *   after processing each frame.
- *   采集线程在后台运行，处理完每帧后通过回调通知控制器
- * - No longer provides polling-style getTarget() interface.
- *   不再提供轮询式 getTarget() 接口
- * - Callback is invoked in capture thread; receiver handles thread sync.
- *   回调在采集线程中调用，由回调接收方负责线程同步
- *
- * SOLID design / SOLID设计:
- * - SRP: Only responsible for visual capture and color detection
- *   单一职责: 仅负责视觉采集和颜色检测
- * - DIP: Pushes results to upper layer via VisionCallback
- *   依赖倒置: 通过 VisionCallback 将结果推送给上层
+ * OpenCV HSV color detection with background capture thread.
+ * 基于 OpenCV HSV 颜色检测，后台线程采集。
+ * Pushes results to controller via VisionCallback.
+ * 通过 VisionCallback 推送结果给控制器。
  */
 class VisionSystem : public IVisionSource {
 public:

@@ -33,14 +33,12 @@ void TrackerController::start() {
             << std::endl;
   std::cout << "[Controller] IK engine ready / IK引擎就绪" << std::endl;
 
-  // 2. Register vision callback (event-driven core)
-  //    注册视觉回调（事件驱动核心）
+  // 2. 注册视觉回调 / Register vision callback
   vision_->setCallback([this](bool found, double dx, double dy) {
     this->onVisionUpdate(found, dx, dy);
   });
 
-  // 3. Start timer thread (50Hz control frequency)
-  //    启动定时器线程（50Hz控制频率）
+  // 3. 启动定时器线程（50Hz）/ Start timer thread
   running_ = true;
   timer_thread_ = std::thread(&TrackerController::timerLoop, this);
 
@@ -84,10 +82,7 @@ void TrackerController::stop() {
 }
 
 void TrackerController::onVisionUpdate(bool found, double dx, double dy) {
-  // Vision callback: called in capture thread (event-driven)
-  // Atomically updates shared state, ensures fast callback return
-  // 视觉回调：在采集线程中被调用（事件驱动）
-  // 仅原子更新共享状态，确保回调快速返回
+  // 视觉回调，更新共享状态 / Vision callback, update shared state
   std::lock_guard<std::mutex> lock(state_mutex_);
   target_found_ = found;
   target_dx_ = dx;
@@ -95,10 +90,8 @@ void TrackerController::onVisionUpdate(bool found, double dx, double dy) {
 }
 
 void TrackerController::timerLoop() {
-  // Timer thread: uses condition_variable::wait_for for precise 50Hz timing
-  // Replaces sleep_for; can be instantly woken by stop() notify_all()
-  // 定时器线程：使用 condition_variable::wait_for 实现精确50Hz定时
-  // 替代 sleep_for，可被 stop() 的 notify_all() 立即唤醒
+  // 50Hz 定时器循环，用 condition_variable 实现可中断的等待
+  // 50Hz timer loop, interruptible via condition_variable
 
   while (running_) {
     auto t_start = std::chrono::steady_clock::now();
@@ -106,10 +99,7 @@ void TrackerController::timerLoop() {
     // Execute control computation / 执行控制计算
     controlStep();
 
-    // Precise timing wait using condition_variable instead of sleep_for
-    // Advantage: can be instantly woken by stop(), won't block exit
-    // 精确定时等待：使用 condition_variable 替代 sleep_for
-    // 优点：可以被 stop() 立即唤醒，不会阻塞退出
+    // 等待剩余时间 / Wait remaining time
     auto t_end = std::chrono::steady_clock::now();
     auto elapsed = std::chrono::duration<double>(t_end - t_start).count();
     double remaining = CONTROL_DT - elapsed;
@@ -123,7 +113,7 @@ void TrackerController::timerLoop() {
 }
 
 void TrackerController::controlStep() {
-  // --- Read vision state (thread-safe) / 读取视觉状态（线程安全）---
+  // 读取视觉状态 / Read vision state
   bool found;
   double dx, dy;
   {
@@ -133,7 +123,7 @@ void TrackerController::controlStep() {
     dy = target_dy_;
   }
 
-  // --- Compute target pose / 计算目标姿态 ---
+  // 计算目标姿态 / Compute target pose
   double target_pitch, target_roll;
   if (found) {
     target_pitch = dx * 50.0;
@@ -143,16 +133,16 @@ void TrackerController::controlStep() {
     target_roll = 0.0;
   }
 
-  // --- PID update / PID 更新 ---
+  // PID 更新
   double pitch =
       pid_pitch_.update(target_pitch - pid_pitch_.getOutput(), CONTROL_DT);
   double roll =
       pid_roll_.update(target_roll - pid_roll_.getOutput(), CONTROL_DT);
 
-  // --- IK solve / IK 解算 ---
+  // IK 解算
   std::vector<int> target_servo_angles = ik_->solve(pitch, roll);
 
-  // --- Servo angle smooth interpolation / 舵机角度平滑插值 ---
+  // 舵机角度平滑插值 / Servo angle smoothing
   for (size_t i = 0; i < 3; i++) {
     if (last_sent_angles_[i] == -1) {
       current_servo_angles_[i] = target_servo_angles[i];
@@ -162,7 +152,7 @@ void TrackerController::controlStep() {
     }
   }
 
-  // --- Send to servos / 发送到舵机 ---
+  // 发送到舵机 / Send to servos
   std::vector<int> servo_angles(3);
   for (size_t i = 0; i < 3; i++) {
     servo_angles[i] = static_cast<int>(std::round(current_servo_angles_[i]));
@@ -174,7 +164,7 @@ void TrackerController::controlStep() {
     }
   }
 
-  // --- Terminal status output (~2Hz) / 终端状态输出（约2Hz）---
+  // 终端输出（~2Hz）
   loop_count_++;
   if (loop_count_ % 25 == 0) {
     std::string src = found ? "dx=" + std::to_string(dx).substr(0, 5) +

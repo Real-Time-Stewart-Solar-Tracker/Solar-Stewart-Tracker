@@ -9,15 +9,8 @@
  * @brief 3RRS parallel mechanism inverse kinematics solver
  *        3RRS并联机构逆运动学求解器
  *
- * Implements IKinematicsSolver interface.
  * Algorithm aligned with MATLAB sun211.m.
- * 实现 IKinematicsSolver 接口，算法对齐MATLAB sun211.m。
- *
- * SOLID:
- * - SRP: Only responsible for IK computation, no I/O
- *   单一职责: 仅负责逆运动学计算，不涉及任何I/O
- * - LSP: Can be replaced by any IKinematicsSolver implementation
- *   里氏替换: 可被任何 IKinematicsSolver 实现替换
+ * 算法对齐 MATLAB sun211.m。
  */
 class RRSKinematics : public IKinematicsSolver {
 public:

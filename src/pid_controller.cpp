@@ -1,3 +1,7 @@
+/**
+ * @file pid_controller.cpp
+ * @brief PIDController implementation / PID控制器实现
+ */
 #include "pid_controller.hpp"
 #include <algorithm>
 
@@ -6,7 +10,7 @@ PIDController::PIDController(double kp, double ki, double kd, double max_tilt)
       last_error_(0.0), output_(0.0) {}
 
 double PIDController::update(double error, double dt) {
-  // Aligned with sun211.m lines 146-155 / 对齐sun211.m第146~155行
+  // PID 计算（对齐 sun211.m 第146~155行）
   integral_ += error * dt;
 
   double derivative = (dt > 0) ? (error - last_error_) / dt : 0.0;

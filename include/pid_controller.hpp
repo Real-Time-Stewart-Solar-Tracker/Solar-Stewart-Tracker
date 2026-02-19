@@ -2,19 +2,10 @@
 #define PID_CONTROLLER_HPP
 
 /**
- * @brief PID Controller class / PID控制器类
+ * @brief PID Controller / PID控制器
  *
- * Implements Proportional-Integral-Derivative control algorithm.
- * 实现比例-积分-微分控制算法。
- *
- * SOLID design / SOLID设计:
- * - SRP: Only responsible for PID computation, no I/O
- *   单一职责: 仅负责PID计算，不涉及任何I/O操作
- * - Value semantics: safely copyable and assignable (no resource management)
- *   值语义: 可安全拷贝和赋值（无资源管理）
- *
- * All data is private, state is accessed via getters.
- * 所有数据私有，通过getter安全获取状态。
+ * Proportional-Integral-Derivative control algorithm.
+ * 比例-积分-微分控制算法。
  */
 class PIDController {
 public:

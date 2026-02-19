@@ -1,17 +1,12 @@
 /**
  * @file test_kinematics.cpp
- * @brief RRSKinematics Inverse Kinematics Unit Tests
- *        RRSKinematics 逆运动学单元测试
- *
- * Uses Google Test framework to verify 3RRS parallel mechanism IK correctness.
- * 使用 Google Test 框架验证3RRS并联机构逆运动学求解的正确性。
+ * @brief RRSKinematics 单元测试 / RRSKinematics Unit Tests
  */
 
 #include "kinematics.hpp"
 #include <cmath>
 #include <gtest/gtest.h>
 #include <memory>
-
 
 class KinematicsTest : public ::testing::Test {
 protected:

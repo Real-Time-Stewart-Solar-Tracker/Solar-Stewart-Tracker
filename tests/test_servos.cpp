@@ -53,8 +53,8 @@ int main() {
   const int step = 1;
   const int delay_ms = 50; // Delay per step (ms) / 每步延迟时间（毫秒）
 
-  int current_angle = min_angle;
-  int direction = 1; // 1 = increasing, -1 = decreasing
+  int current_angle = max_angle;
+  int direction = -1; // 1 = increasing, -1 = decreasing
 
   while (running) {
     // Set all three servos to current angle
