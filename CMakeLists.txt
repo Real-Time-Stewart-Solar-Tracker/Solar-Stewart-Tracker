@@ -52,10 +52,35 @@ else()
 endif()
 
 # -----------------------------
+# Optional: OpenCV support (UI/plot + mouse interaction)
+# -----------------------------
+find_package(OpenCV QUIET)
+
+if(OpenCV_FOUND)
+    message(STATUS "Found OpenCV: ${OpenCV_VERSION}")
+
+    # UiViewer.cpp is inside solar_tracker_core (CORE_SOURCES), so core needs OpenCV too
+    target_include_directories(solar_tracker_core PRIVATE ${OpenCV_INCLUDE_DIRS})
+    target_link_libraries(solar_tracker_core PRIVATE ${OpenCV_LIBS})
+
+    target_compile_definitions(solar_tracker_core PUBLIC SOLAR_HAVE_OPENCV=1)
+else()
+    message(STATUS "OpenCV not found (UI disabled)")
+    target_compile_definitions(solar_tracker_core PUBLIC SOLAR_HAVE_OPENCV=0)
+endif()
+
+# -----------------------------
 # Main executable
 # -----------------------------
 add_executable(solar_tracker src/main.cpp)
 target_link_libraries(solar_tracker PRIVATE solar_tracker_core)
+
+# main.cpp includes UiViewer.hpp which includes <opencv2/...>
+# so the executable must also get OpenCV include dirs/libs
+if(OpenCV_FOUND)
+    target_include_directories(solar_tracker PRIVATE ${OpenCV_INCLUDE_DIRS})
+    target_link_libraries(solar_tracker PRIVATE ${OpenCV_LIBS})
+endif()
 
 # -----------------------------
 # Tests

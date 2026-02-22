@@ -1,16 +1,20 @@
-#ifdef __linux__
+#if SOLAR_HAVE_LIBCAMERA
+
 #include "sensors/LibcameraPublisher.hpp"
 
 #include <libcamera/camera.h>
 #include <libcamera/camera_manager.h>
 #include <libcamera/control_ids.h>
+#include <libcamera/formats.h>
 #include <libcamera/framebuffer_allocator.h>
 #include <libcamera/request.h>
 #include <libcamera/stream.h>
-#include <chrono>
+
 #include <sys/mman.h>
 #include <unistd.h>
 
+#include <array>
+#include <chrono>
 #include <cstring>
 #include <exception>
 #include <memory>
@@ -19,19 +23,46 @@
 #include <vector>
 
 namespace solar {
-
 namespace {
 
-// Copy one plane into dst using mmap (read-only).
-static void copyPlaneTo(std::vector<uint8_t>& dst, int fd, std::size_t length, std::size_t offset) {
+// Copy Y plane into packed grayscale buffer (width*height), respecting stride.
+static void copyPlaneY_StrideAware(std::vector<uint8_t>& outGray,
+                                  int fd,
+                                  std::size_t length,
+                                  std::size_t offset,
+                                  int width,
+                                  int height,
+                                  int strideBytes)
+{
+    if (fd < 0 || length == 0) {
+        throw std::runtime_error("Invalid buffer plane (fd/length)");
+    }
+    if (width <= 0 || height <= 0) {
+        throw std::runtime_error("Invalid dimensions");
+    }
+    if (strideBytes <= 0) {
+        throw std::runtime_error("Invalid stride");
+    }
+
     void* mem = mmap(nullptr, length, PROT_READ, MAP_SHARED, fd, static_cast<off_t>(offset));
     if (mem == MAP_FAILED) {
         throw std::runtime_error("mmap failed for buffer plane");
     }
 
-    const std::size_t oldSize = dst.size();
-    dst.resize(oldSize + length);
-    std::memcpy(dst.data() + oldSize, mem, length);
+    const uint8_t* src = static_cast<const uint8_t*>(mem);
+    outGray.resize(static_cast<std::size_t>(width) * static_cast<std::size_t>(height));
+
+    for (int y = 0; y < height; ++y) {
+        const std::size_t srcRow = static_cast<std::size_t>(y) * static_cast<std::size_t>(strideBytes);
+        const std::size_t dstRow = static_cast<std::size_t>(y) * static_cast<std::size_t>(width);
+
+        if (srcRow + static_cast<std::size_t>(width) > length) {
+            munmap(mem, length);
+            throw std::runtime_error("Plane copy out of bounds (stride/length mismatch)");
+        }
+
+        std::memcpy(outGray.data() + dstRow, src + srcRow, static_cast<std::size_t>(width));
+    }
 
     munmap(mem, length);
 }
@@ -91,7 +122,7 @@ LibcameraPublisher::Config LibcameraPublisher::config() const {
 void LibcameraPublisher::run_() {
     log_.info("LibcameraPublisher: libcamera thread starting");
 
-    std::unique_ptr<libcamera::CameraManager> cm = std::make_unique<libcamera::CameraManager>();
+    auto cm = std::make_unique<libcamera::CameraManager>();
     if (cm->start() < 0) {
         log_.error("LibcameraPublisher: CameraManager start failed");
         running_ = false;
@@ -105,8 +136,8 @@ void LibcameraPublisher::run_() {
         return;
     }
 
-    // Select camera (by id if provided, else first camera)
     std::shared_ptr<libcamera::Camera> cam;
+
     if (!cfg_.camera_id.empty()) {
         for (auto& c : cm->cameras()) {
             if (c->id() == cfg_.camera_id) {
@@ -129,10 +160,8 @@ void LibcameraPublisher::run_() {
         return;
     }
 
-    // Configure one Viewfinder stream
-    std::unique_ptr<libcamera::CameraConfiguration> cfg =
-        cam->generateConfiguration({libcamera::StreamRole::Viewfinder});
-    if (!cfg || cfg->empty()) {
+    auto camCfg = cam->generateConfiguration({libcamera::StreamRole::Viewfinder});
+    if (!camCfg || camCfg->empty()) {
         log_.error("LibcameraPublisher: generateConfiguration failed");
         cam->release();
         cm->stop();
@@ -140,11 +169,14 @@ void LibcameraPublisher::run_() {
         return;
     }
 
-    libcamera::StreamConfiguration& sc = cfg->at(0);
+    libcamera::StreamConfiguration& sc = camCfg->at(0);
     sc.size.width  = static_cast<unsigned int>(cfg_.width);
     sc.size.height = static_cast<unsigned int>(cfg_.height);
 
-    if (cfg->validate() == libcamera::CameraConfiguration::Invalid) {
+    // Try a format with a dedicated luma plane.
+    sc.pixelFormat = libcamera::formats::YUV420;
+
+    if (camCfg->validate() == libcamera::CameraConfiguration::Invalid) {
         log_.error("LibcameraPublisher: configuration invalid");
         cam->release();
         cm->stop();
@@ -152,7 +184,7 @@ void LibcameraPublisher::run_() {
         return;
     }
 
-    if (cam->configure(cfg.get()) < 0) {
+    if (cam->configure(camCfg.get()) < 0) {
         log_.error("LibcameraPublisher: configure failed");
         cam->release();
         cm->stop();
@@ -169,7 +201,8 @@ void LibcameraPublisher::run_() {
         return;
     }
 
-    // Allocate buffers
+    const int strideBytes = static_cast<int>(sc.stride);
+
     libcamera::FrameBufferAllocator allocator(cam);
     if (allocator.allocate(stream) < 0) {
         log_.error("LibcameraPublisher: buffer allocation failed");
@@ -189,12 +222,10 @@ void LibcameraPublisher::run_() {
         return;
     }
 
-    // Requests must stay alive while streaming
     std::vector<std::unique_ptr<libcamera::Request>> requests;
     requests.reserve(buffers.size());
 
-    // Event-driven callback: called when a request completes
-    cam->requestCompleted.connect([this, stream](libcamera::Request* request) {
+    cam->requestCompleted.connect([this, stream, strideBytes](libcamera::Request* request) {
         if (!request) return;
         if (!running_) return;
 
@@ -210,25 +241,27 @@ void LibcameraPublisher::run_() {
         }
 
         libcamera::FrameBuffer* fb = it->second;
+        if (fb->planes().empty()) {
+            request->reuse(libcamera::Request::ReuseBuffers);
+            request->camera()->queueRequest(request);
+            return;
+        }
 
         FrameEvent fe;
-        fe.frame_id = ++frameId_;
+        fe.frame_id  = frameId_.fetch_add(1) + 1;
         fe.t_capture = std::chrono::steady_clock::now();
-        fe.width = cfg_.width;
-        fe.height = cfg_.height;
-        fe.data.clear();
+        fe.width     = cfg_.width;
+        fe.height    = cfg_.height;
 
         try {
-            // Copy all planes into fe.data (concatenated).
-            // Later you may interpret/convert formats (e.g., YUV -> grayscale).
-            for (const auto& plane : fb->planes()) {
-                const int fd = plane.fd.get();
-                const std::size_t len = plane.length;
-                const std::size_t off = plane.offset;
-                if (fd < 0 || len == 0) continue;
-
-                copyPlaneTo(fe.data, fd, len, off);
-            }
+            const auto& p0 = fb->planes().front();
+            copyPlaneY_StrideAware(fe.data,
+                                   p0.fd.get(),
+                                   p0.length,
+                                   p0.offset,
+                                   cfg_.width,
+                                   cfg_.height,
+                                   strideBytes);
 
             FrameCallback cbCopy;
             {
@@ -242,17 +275,16 @@ void LibcameraPublisher::run_() {
             log_.error(std::string("LibcameraPublisher: frame copy failed: ") + e.what());
         }
 
-        // Reuse and requeue request
         request->reuse(libcamera::Request::ReuseBuffers);
         request->camera()->queueRequest(request);
     });
 
-    // Start camera with best-effort FPS control
     libcamera::ControlList controls(cam->controls());
     if (cfg_.fps > 0) {
         const int64_t frame_us = 1000000LL / cfg_.fps;
+        const std::array<int64_t, 2> limits{frame_us, frame_us};
         controls.set(libcamera::controls::FrameDurationLimits,
-                     libcamera::Span<const int64_t>({frame_us, frame_us}));
+                     libcamera::Span<const int64_t>(limits.data(), limits.size()));
     }
 
     if (cam->start(&controls) < 0) {
@@ -264,9 +296,8 @@ void LibcameraPublisher::run_() {
         return;
     }
 
-    // Create & queue requests
     for (auto& buf : buffers) {
-        std::unique_ptr<libcamera::Request> req = cam->createRequest();
+        auto req = cam->createRequest();
         if (!req) {
             log_.error("LibcameraPublisher: createRequest failed");
             continue;
@@ -284,15 +315,13 @@ void LibcameraPublisher::run_() {
         }
     }
 
-    log_.info("LibcameraPublisher: streaming started (event-driven)");
+    log_.info("LibcameraPublisher: streaming started");
 
-    // Block until stop requested (no polling, no sleep)
     {
         std::unique_lock<std::mutex> lk(runMutex_);
         runCv_.wait(lk, [this] { return !running_.load(); });
     }
 
-    // Cleanup
     cam->stop();
     allocator.free(stream);
     cam->release();
@@ -302,4 +331,5 @@ void LibcameraPublisher::run_() {
 }
 
 } // namespace solar
-#endif
+
+#endif // SOLAR_HAVE_LIBCAMERA

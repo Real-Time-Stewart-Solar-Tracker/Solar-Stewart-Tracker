@@ -2,6 +2,8 @@
 
 #include <chrono>
 #include <cstdint>
+#include <deque>
+#include <memory>
 #include <optional>
 #include <unordered_map>
 
@@ -10,37 +12,60 @@
 namespace solar {
 
 /**
- * LatencyMonitor
+ * @brief Measures and aggregates end-to-end latency across the processing pipeline.
  *
- * Collects per-frame timestamps (by frame_id) and computes latency metrics:
- * - L_total    = t_actuate  - t_capture
- * - L_vision   = t_estimate - t_capture
- * - L_control  = t_control  - t_estimate
- * - L_actuate  = t_actuate  - t_control
+ * Tracks timestamps per frame_id and computes:
+ * - Total latency (capture → actuate)
+ * - Vision latency (capture → estimate)
+ * - Control latency (estimate → control)
+ * - Actuation latency (control → actuate)
  *
- * Uses steady_clock (monotonic) for correct latency measurement.
- * Thread-safe via internal mutex (implementation in .cpp).
+ * Uses std::chrono::steady_clock for monotonic timing.
+ * Thread-safe (synchronization implemented in .cpp).
  */
 class LatencyMonitor {
 public:
-    using Clock = std::chrono::steady_clock;
+    /// @brief Monotonic clock type used for latency measurement.
+    using Clock     = std::chrono::steady_clock;
+
+    /// @brief Time point type associated with Clock.
     using TimePoint = Clock::time_point;
 
-    explicit LatencyMonitor(Logger& log);
+    /// @brief Configuration controlling inflight frame tracking limits.
+    struct Config {
+        /// @brief Maximum number of inflight frames tracked simultaneously.
+        std::size_t max_inflight_frames{2000};
+
+        /// @brief Maximum allowed age of inflight frames (0 disables age pruning).
+        std::chrono::milliseconds max_inflight_age{2000};
+    };
+
+    /// @brief Construct monitor with logger and optional configuration.
+    explicit LatencyMonitor(Logger& log, Config cfg = {});
+
+    /// @brief Destructor.
+    ~LatencyMonitor();
 
     LatencyMonitor(const LatencyMonitor&) = delete;
     LatencyMonitor& operator=(const LatencyMonitor&) = delete;
 
-    // Record timestamps (frame_id ties the pipeline together)
+    /// @brief Record capture timestamp for a frame.
     void onCapture(uint64_t frame_id, TimePoint t_capture);
+
+    /// @brief Record estimate (vision) timestamp for a frame.
     void onEstimate(uint64_t frame_id, TimePoint t_estimate);
+
+    /// @brief Record control timestamp for a frame.
     void onControl(uint64_t frame_id, TimePoint t_control);
+
+    /// @brief Record actuation timestamp for a frame.
     void onActuate(uint64_t frame_id, TimePoint t_actuate);
 
-    // Print summary metrics (call on shutdown)
+    /// @brief Print aggregated latency statistics to the logger.
     void printSummary();
 
 private:
+    /// @brief Per-frame timestamp storage.
     struct Stamps {
         std::optional<TimePoint> capture;
         std::optional<TimePoint> estimate;
@@ -48,6 +73,7 @@ private:
         std::optional<TimePoint> actuate;
     };
 
+    /// @brief Aggregated latency statistics.
     struct Stats {
         std::size_t count{0};
 
@@ -70,15 +96,25 @@ private:
         bool initialized{false};
     };
 
+    /// @brief Ensure frame entry exists and preserve insertion order.
+    Stamps& ensureEntry_(uint64_t frame_id);
+
+    /// @brief Prune incomplete frames to enforce memory bounds.
+    void pruneInflight_(TimePoint now);
+
+    /// @brief Finalize a frame if all timestamps are present.
     void tryFinalize_(uint64_t frame_id);
 
     Logger& log_;
+    Config cfg_;
+
     std::unordered_map<uint64_t, Stamps> stamps_;
+    std::deque<uint64_t> order_;
+
     Stats stats_;
 
-    // mutex is in .cpp to keep header minimal
     struct ImplMutex;
-    ImplMutex* mtx_;
+    std::unique_ptr<ImplMutex> mtx_;
 };
 
 } // namespace solar

@@ -3,59 +3,72 @@
 #include <cstdint>
 #include <cstddef>
 #include <functional>
+#include <mutex>
 
 #include "common/Logger.hpp"
 #include "common/Types.hpp"
 
-namespace solar { class Logger; }
 namespace solar {
 
 /**
- * SunTracker
+ * @brief Vision module that detects the sun centroid in a frame.
  *
- * Consumes FrameEvent and produces SunEstimate.
+ * Consumes FrameEvent objects (grayscale input) and produces SunEstimate outputs
+ * via a registered callback. Designed for event-driven pipelines (no internal threads).
  *
- * Current supported input:
- * - Grayscale image where FrameEvent::data contains width*height bytes.
+ * Input:
+ * - FrameEvent::data contains width * height bytes (8-bit grayscale).
  *
  * Output:
- * - (cx, cy) centroid in pixels
- * - confidence in [0,1]
- *
- * Notes:
- * - Pure processing logic (no threads inside)
- * - Designed for event-driven pipeline: onFrame(...) called when a frame arrives
+ * - Centroid (cx, cy) in pixel coordinates
+ * - Confidence in range [0, 1]
  */
 class SunTracker {
 public:
+    /// @brief Callback type used to deliver sun detection results.
     using EstimateCallback = std::function<void(const SunEstimate&)>;
 
+    /// @brief Sun detection configuration parameters.
     struct Config {
-        // Pixel is considered "bright" if >= threshold.
+        /// @brief Pixel intensity threshold for sun segmentation.
         uint8_t threshold{200};
 
-        // Minimum number of bright pixels required to accept detection.
+        /// @brief Minimum number of above-threshold pixels required for a valid detection.
         std::size_t min_pixels{30};
 
-        // Confidence scales with fraction of pixels above threshold (clamped).
+        /// @brief Scaling factor used when mapping detection strength to confidence.
         float confidence_scale{10.0f};
     };
 
+    /// @brief Construct tracker with logger and configuration.
     SunTracker(Logger& log, Config cfg);
 
     SunTracker(const SunTracker&) = delete;
     SunTracker& operator=(const SunTracker&) = delete;
 
+    /// @brief Register callback to receive SunEstimate outputs.
     void registerEstimateCallback(EstimateCallback cb);
 
-    // Process one frame (event-driven call).
+    /// @brief Update threshold at runtime (thread-safe).
+    void setThreshold(uint8_t thr);
+
+    /// @brief Process one frame and emit a SunEstimate if a callback is set.
     void onFrame(const FrameEvent& frame);
 
+    /// @brief Get current configuration.
     Config config() const;
 
 private:
     Logger& log_;
     Config cfg_;
+
+    /// @brief Protects cfg_ for runtime updates.
+    mutable std::mutex cfgMutex_;
+
+    /// @brief Protects estimate callback registration and invocation.
+    mutable std::mutex cbMtx_;
+
+    /// @brief Registered estimate callback (may be empty).
     EstimateCallback estimateCb_{};
 };
 

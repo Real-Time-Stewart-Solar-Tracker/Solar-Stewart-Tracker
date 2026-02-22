@@ -10,62 +10,71 @@
 namespace solar {
 
 /**
- * ThreadSafeQueue<T>
+ * @brief Blocking, thread-safe queue for event-driven systems.
  *
- * A blocking, thread-safe queue designed for event-driven systems.
+ * Provides safe multi-producer / multi-consumer semantics.
  *
- * Properties:
- * - Producers call push(...)
- * - Consumers call wait_pop(...) which blocks until:
- *     - an item arrives, or
- *     - stop is requested
- * - stop() wakes all waiting threads and causes wait_pop to return std::nullopt
+ * Lifecycle semantics:
+ * - stop(): prevents further pushes and wakes all waiting threads.
+ * - After stop(): remaining items may be drained.
+ * - Once stopped and empty, wait_pop() returns std::nullopt.
+ * - reset(): re-enables queue (useful for tests or controlled restarts).
  *
- * No polling and no sleep-based timing are used.
+ * No polling or sleep-based timing is used.
+ *
+ * @tparam T Type of elements stored in the queue.
  */
 template <typename T>
 class ThreadSafeQueue {
 public:
+    /// @brief Default constructor.
     ThreadSafeQueue() = default;
 
     ThreadSafeQueue(const ThreadSafeQueue&) = delete;
     ThreadSafeQueue& operator=(const ThreadSafeQueue&) = delete;
 
+    /// @brief Destructor automatically calls stop().
     ~ThreadSafeQueue() { stop(); }
 
-    // Push by copy
-    void push(const T& item) {
+    /**
+     * @brief Push an item by copy.
+     * @param item Item to enqueue.
+     * @return false if the queue is stopped and the item was not queued.
+     */
+    bool push(const T& item) {
         {
             std::lock_guard<std::mutex> lock(m_);
-            if (stopped_) return; // ignore pushes after stop
+            if (stopped_) return false;
             q_.push_back(item);
         }
         cv_.notify_one();
-    }
-
-    // Push by move
-    void push(T&& item) {
-        {
-            std::lock_guard<std::mutex> lock(m_);
-            if (stopped_) return;
-            q_.push_back(std::move(item));
-        }
-        cv_.notify_one();
+        return true;
     }
 
     /**
-     * wait_pop()
-     * Blocks until an item is available or stop() is called.
-     * Returns:
-     *  - std::optional<T> with value if an item was popped
-     *  - std::nullopt if stopped and queue is empty
+     * @brief Push an item by move.
+     * @param item Item to enqueue.
+     * @return false if the queue is stopped and the item was not queued.
+     */
+    bool push(T&& item) {
+        {
+            std::lock_guard<std::mutex> lock(m_);
+            if (stopped_) return false;
+            q_.push_back(std::move(item));
+        }
+        cv_.notify_one();
+        return true;
+    }
+
+    /**
+     * @brief Block until an item is available or the queue is stopped.
+     * @return Popped value, or std::nullopt if stopped and empty.
      */
     std::optional<T> wait_pop() {
         std::unique_lock<std::mutex> lock(m_);
         cv_.wait(lock, [&] { return stopped_ || !q_.empty(); });
 
         if (q_.empty()) {
-            // If stopped_ is true and queue is empty, exit cleanly.
             return std::nullopt;
         }
 
@@ -75,8 +84,8 @@ public:
     }
 
     /**
-     * try_pop()
-     * Non-blocking: returns immediately.
+     * @brief Attempt to pop an item without blocking.
+     * @return Popped value, or std::nullopt if empty.
      */
     std::optional<T> try_pop() {
         std::lock_guard<std::mutex> lock(m_);
@@ -88,11 +97,9 @@ public:
     }
 
     /**
-     * stop()
-     * Requests stop and wakes any waiting consumer threads.
-     * After stop:
-     * - wait_pop will return remaining items until empty, then std::nullopt
-     * - pushes are ignored
+     * @brief Stop the queue and wake all waiting threads.
+     *
+     * Prevents further pushes. Remaining items may still be drained.
      */
     void stop() {
         {
@@ -102,28 +109,36 @@ public:
         cv_.notify_all();
     }
 
+    /// @brief Alias for stop().
+    void close() { stop(); }
+
     /**
-     * clear()
-     * Removes all queued items (does not change stopped state).
+     * @brief Re-enable the queue after stop().
+     *
+     * Does not clear existing items.
+     */
+    void reset() {
+        std::lock_guard<std::mutex> lock(m_);
+        stopped_ = false;
+    }
+
+    /**
+     * @brief Remove all queued items.
+     *
+     * Does not modify the stopped state.
      */
     void clear() {
         std::lock_guard<std::mutex> lock(m_);
         q_.clear();
     }
 
-    /**
-     * size()
-     * Returns current queue size (snapshot).
-     */
+    /// @brief Get current number of queued items.
     std::size_t size() const {
         std::lock_guard<std::mutex> lock(m_);
         return q_.size();
     }
 
-    /**
-     * stopped()
-     * Returns whether stop has been requested.
-     */
+    /// @brief Check whether the queue has been stopped.
     bool stopped() const {
         std::lock_guard<std::mutex> lock(m_);
         return stopped_;

@@ -3,14 +3,28 @@
 // #include <algorithm>
 // #include <chrono>
 // #include <cmath>
+// #include <string>
+
+// #if defined(__linux__)
+// #include <cerrno>
+// #include <cstring>
+// #include <poll.h>
+// #include <sys/eventfd.h>
+// #include <sys/timerfd.h>
+// #include <unistd.h>
+// #endif
 
 // namespace solar {
 
 // SimulatedPublisher::SimulatedPublisher(Logger& log, Config cfg)
 //     : log_(log),
 //       cfg_(cfg),
-//       rng_(std::random_device{}()),
-//       noise_(0.0f, cfg.noise_std) {}
+//       rng_(std::random_device{}()) {
+
+//     if (cfg_.noise_std > 0.0f) {
+//         noise_.emplace(0.0f, cfg_.noise_std);
+//     }
+// }
 
 // SimulatedPublisher::~SimulatedPublisher() {
 //     stop();
@@ -22,79 +36,165 @@
 // }
 
 // bool SimulatedPublisher::start() {
-//     if (running_) return true;
+//     if (running_.load()) return true;
 
-//     if (cfg_.width <= 0 || cfg_.height <= 0 || cfg_.fps <= 0) {
+// #if !defined(__linux__)
+//     // Course target is Raspberry Pi/Linux; keep behaviour explicit and safe.
+//     log_.error("SimulatedPublisher: supported only on Linux builds (Raspberry Pi target).");
+//     return false;
+// #else
+//     if (cfg_.fps <= 0 || cfg_.width <= 0 || cfg_.height <= 0) {
 //         log_.error("SimulatedPublisher: invalid config (width/height/fps)");
 //         return false;
 //     }
 
-//     running_ = true;
+//     running_.store(true);
 
 //     try {
-//         thread_ = std::thread(&SimulatedPublisher::run_, this);
+//         worker_ = std::thread(&SimulatedPublisher::run_, this);
 //     } catch (...) {
-//         running_ = false;
+//         running_.store(false);
 //         log_.error("SimulatedPublisher: failed to start thread");
 //         return false;
 //     }
 
 //     log_.info("SimulatedPublisher started");
 //     return true;
+// #endif
 // }
 
 // void SimulatedPublisher::stop() {
-//     if (!running_) return;
+// #if !defined(__linux__)
+//     if (!running_.exchange(false)) return;
+//     if (worker_.joinable()) worker_.join();
+//     log_.info("SimulatedPublisher stopped");
+// #else
+//     if (!running_.exchange(false)) return;
 
-//     running_ = false;
+//     // Wake poll() immediately (event-driven, no sleeps).
+//     if (stopFd_ >= 0) {
+//         const uint64_t one = 1;
+//         const ssize_t n = ::write(stopFd_, &one, sizeof(one));
+//         (void)n; // best-effort
+//     }
 
-//     if (thread_.joinable()) {
-//         thread_.join();
+//     if (worker_.joinable()) {
+//         worker_.join();
 //     }
 
 //     log_.info("SimulatedPublisher stopped");
+// #endif
 // }
 
 // bool SimulatedPublisher::isRunning() const noexcept {
 //     return running_.load();
 // }
 
-// SimulatedPublisher::Config SimulatedPublisher::config() const {
-//     return cfg_;
-// }
-
 // void SimulatedPublisher::run_() {
+// #if !defined(__linux__)
+//     return;
+// #else
 //     using clock = std::chrono::steady_clock;
 
-//     const auto period = std::chrono::microseconds(static_cast<int>(1000000.0 / cfg_.fps));
-//     auto nextTick = clock::now();
-
-//     while (running_) {
-//         nextTick += period;
-
-//         FrameEvent fe;
-//         fe.frame_id = ++frameId_;
-//         fe.t_capture = clock::now();
-//         fe.width = cfg_.width;
-//         fe.height = cfg_.height;
-//         fe.data.clear();
-//         fe.data.reserve(static_cast<std::size_t>(cfg_.width) * static_cast<std::size_t>(cfg_.height));
-
-//         generateFrame_(fe);
-
-//         FrameCallback cbCopy;
-//         {
-//             std::lock_guard<std::mutex> lock(cbMutex_);
-//             cbCopy = frameCb_;
-//         }
-//         if (cbCopy) {
-//             cbCopy(fe);
-//         }
-
-//         // This is a simulator: we use a timed wait to emulate fps.
-//         // The realtime path uses libcamera callback (event-driven).
-//         std::this_thread::sleep_until(nextTick);
+//     // Create timerfd (periodic wakeups)
+//     timerFd_ = ::timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC);
+//     if (timerFd_ < 0) {
+//         log_.error(std::string("SimulatedPublisher: timerfd_create failed: ") + std::strerror(errno));
+//         running_.store(false);
+//         return;
 //     }
+
+//     // Create stop eventfd (wakes poll immediately on stop)
+//     stopFd_ = ::eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+//     if (stopFd_ < 0) {
+//         log_.error(std::string("SimulatedPublisher: eventfd failed: ") + std::strerror(errno));
+//         ::close(timerFd_);
+//         timerFd_ = -1;
+//         running_.store(false);
+//         return;
+//     }
+
+//     // Configure timer period
+//     const double period_s = 1.0 / static_cast<double>(cfg_.fps);
+
+//     itimerspec its{};
+//     its.it_interval.tv_sec  = static_cast<time_t>(period_s);
+//     its.it_interval.tv_nsec =
+//         static_cast<long>((period_s - static_cast<double>(its.it_interval.tv_sec)) * 1e9);
+
+//     // Start immediately
+//     its.it_value = its.it_interval;
+
+//     if (::timerfd_settime(timerFd_, 0, &its, nullptr) != 0) {
+//         log_.error(std::string("SimulatedPublisher: timerfd_settime failed: ") + std::strerror(errno));
+//         ::close(stopFd_);
+//         ::close(timerFd_);
+//         stopFd_ = -1;
+//         timerFd_ = -1;
+//         running_.store(false);
+//         return;
+//     }
+
+//     pollfd fds[2]{};
+//     fds[0].fd = timerFd_;
+//     fds[0].events = POLLIN;
+
+//     fds[1].fd = stopFd_;
+//     fds[1].events = POLLIN;
+
+//     while (running_.load()) {
+//         const int pr = ::poll(fds, 2, -1); // block until timer OR stop event
+
+//         if (pr < 0) {
+//             if (errno == EINTR) continue;
+//             log_.error(std::string("SimulatedPublisher: poll failed: ") + std::strerror(errno));
+//             break;
+//         }
+
+//         // Stop event has priority
+//         if (fds[1].revents & POLLIN) {
+//             // Drain eventfd
+//             uint64_t v = 0;
+//             (void)::read(stopFd_, &v, sizeof(v));
+//             break;
+//         }
+
+//         if (fds[0].revents & POLLIN) {
+//             // Consume timer expirations
+//             uint64_t expirations = 0;
+//             const ssize_t n = ::read(timerFd_, &expirations, sizeof(expirations));
+//             if (n != static_cast<ssize_t>(sizeof(expirations))) {
+//                 log_.warn("SimulatedPublisher: timerfd read failed/short");
+//                 continue;
+//             }
+
+//             // Generate ONE frame per tick (simple and deterministic)
+//             FrameEvent fe;
+//             fe.frame_id  = ++frameId_;
+//             fe.t_capture = clock::now();
+//             fe.width     = cfg_.width;
+//             fe.height    = cfg_.height;
+
+//             fe.data.clear();
+//             fe.data.reserve(static_cast<std::size_t>(cfg_.width) *
+//                             static_cast<std::size_t>(cfg_.height));
+
+//             generateFrame_(fe);
+
+//             FrameCallback cb;
+//             {
+//                 std::lock_guard<std::mutex> lock(cbMutex_);
+//                 cb = frameCb_;
+//             }
+//             if (cb) cb(fe);
+//         }
+//     }
+
+//     ::close(stopFd_);
+//     ::close(timerFd_);
+//     stopFd_ = -1;
+//     timerFd_ = -1;
+// #endif
 // }
 
 // void SimulatedPublisher::generateFrame_(FrameEvent& fe) {
@@ -102,46 +202,38 @@
 //     const int h = cfg_.height;
 //     const int r = std::max(1, cfg_.spot_radius);
 
-//     // Background
-//     fe.data.assign(static_cast<std::size_t>(w) * static_cast<std::size_t>(h), cfg_.background);
+//     fe.data.assign(static_cast<std::size_t>(w) * static_cast<std::size_t>(h),
+//                    cfg_.background);
 
-//     // Determine spot center
 //     float cx = w * 0.5f;
 //     float cy = h * 0.5f;
 
 //     if (cfg_.moving_spot) {
-//         // Smooth circular motion around center
 //         phase_ += 0.05f;
-//         const float ax = w * 0.25f;
-//         const float ay = h * 0.20f;
-//         cx = (w * 0.5f) + ax * std::cos(phase_);
-//         cy = (h * 0.5f) + ay * std::sin(phase_ * 0.9f);
+//         cx += w * 0.25f * std::cos(phase_);
+//         cy += h * 0.20f * std::sin(phase_);
 //     }
-//     log_.info("SIM spot cx=" + std::to_string(cx) + " cy=" + std::to_string(cy));
+
 //     const int icx = static_cast<int>(std::round(cx));
 //     const int icy = static_cast<int>(std::round(cy));
+//     const int r2  = r * r;
 
-//     // Draw a filled circle "sun spot"
-//     const int r2 = r * r;
 //     for (int y = icy - r; y <= icy + r; ++y) {
 //         if (y < 0 || y >= h) continue;
 //         for (int x = icx - r; x <= icx + r; ++x) {
 //             if (x < 0 || x >= w) continue;
-
 //             const int dx = x - icx;
 //             const int dy = y - icy;
 //             if ((dx * dx + dy * dy) <= r2) {
-//                 const std::size_t idx = static_cast<std::size_t>(y) * static_cast<std::size_t>(w)
-//                                       + static_cast<std::size_t>(x);
-//                 fe.data[idx] = cfg_.spot_value;
+//                 fe.data[static_cast<std::size_t>(y) * static_cast<std::size_t>(w) +
+//                         static_cast<std::size_t>(x)] = cfg_.spot_value;
 //             }
 //         }
 //     }
 
-//     // Add Gaussian noise
-//     if (cfg_.noise_std > 0.0f) {
+//     if (noise_) {
 //         for (auto& px : fe.data) {
-//             float v = static_cast<float>(px) + noise_(rng_);
+//             float v = static_cast<float>(px) + (*noise_)(rng_);
 //             v = std::clamp(v, 0.0f, 255.0f);
 //             px = static_cast<uint8_t>(v);
 //         }
@@ -150,21 +242,23 @@
 
 // } // namespace solar
 
-
-
-
-
-
-
-
-
-
 #include "sensors/SimulatedPublisher.hpp"
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
-#include <thread>
+#include <string>
+
+#if defined(__linux__)
+  #include <cerrno>
+  #include <cstring>
+  #include <poll.h>
+  #include <sys/eventfd.h>
+  #include <sys/timerfd.h>
+  #include <unistd.h>
+#elif defined(_WIN32)
+  #include <windows.h>
+#endif
 
 namespace solar {
 
@@ -172,13 +266,8 @@ SimulatedPublisher::SimulatedPublisher(Logger& log, Config cfg)
     : log_(log),
       cfg_(cfg),
       rng_(std::random_device{}()) {
-
-    // Only construct the distribution if sigma is valid
     if (cfg_.noise_std > 0.0f) {
         noise_.emplace(0.0f, cfg_.noise_std);
-    } else {
-        // Noise disabled
-        noise_.reset();
     }
 }
 
@@ -192,19 +281,19 @@ void SimulatedPublisher::registerFrameCallback(FrameCallback cb) {
 }
 
 bool SimulatedPublisher::start() {
-    if (running_) return true;
+    if (running_.load()) return true;
 
-    if (cfg_.width <= 0 || cfg_.height <= 0 || cfg_.fps <= 0) {
+    if (cfg_.fps <= 0 || cfg_.width <= 0 || cfg_.height <= 0) {
         log_.error("SimulatedPublisher: invalid config (width/height/fps)");
         return false;
     }
 
-    running_ = true;
+    running_.store(true);
 
     try {
-        thread_ = std::thread(&SimulatedPublisher::run_, this);
+        worker_ = std::thread(&SimulatedPublisher::run_, this);
     } catch (...) {
-        running_ = false;
+        running_.store(false);
         log_.error("SimulatedPublisher: failed to start thread");
         return false;
     }
@@ -214,14 +303,20 @@ bool SimulatedPublisher::start() {
 }
 
 void SimulatedPublisher::stop() {
-    if (!running_) return;
+    if (!running_.exchange(false)) return;
 
-    running_ = false;
-
-    if (thread_.joinable()) {
-        thread_.join();
+#if defined(__linux__)
+    if (stopFd_ >= 0) {
+        const uint64_t one = 1;
+        (void)::write(stopFd_, &one, sizeof(one));
     }
+#elif defined(_WIN32)
+    if (stopEvent_) {
+        SetEvent(stopEvent_);
+    }
+#endif
 
+    if (worker_.joinable()) worker_.join();
     log_.info("SimulatedPublisher stopped");
 }
 
@@ -229,46 +324,172 @@ bool SimulatedPublisher::isRunning() const noexcept {
     return running_.load();
 }
 
-SimulatedPublisher::Config SimulatedPublisher::config() const {
-    return cfg_;
-}
-
 void SimulatedPublisher::run_() {
     using clock = std::chrono::steady_clock;
 
-    const auto period =
-        std::chrono::microseconds(static_cast<int>(1000000.0 / cfg_.fps));
+#if defined(__linux__)
 
-    auto nextTick = clock::now();
-
-    while (running_) {
-        nextTick += period;
-
-        FrameEvent fe;
-        fe.frame_id = ++frameId_;
-        fe.t_capture = clock::now();
-        fe.width = cfg_.width;
-        fe.height = cfg_.height;
-
-        fe.data.clear();
-        fe.data.reserve(static_cast<std::size_t>(cfg_.width) *
-                        static_cast<std::size_t>(cfg_.height));
-
-        generateFrame_(fe);
-
-        FrameCallback cbCopy;
-        {
-            std::lock_guard<std::mutex> lock(cbMutex_);
-            cbCopy = frameCb_;
-        }
-
-        if (cbCopy) {
-            cbCopy(fe);
-        }
-
-        // This is a simulator: emulate FPS with a timed wait.
-        std::this_thread::sleep_until(nextTick);
+    timerFd_ = ::timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC);
+    if (timerFd_ < 0) {
+        log_.error(std::string("SimulatedPublisher: timerfd_create failed: ") + std::strerror(errno));
+        running_.store(false);
+        return;
     }
+
+    stopFd_ = ::eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+    if (stopFd_ < 0) {
+        log_.error(std::string("SimulatedPublisher: eventfd failed: ") + std::strerror(errno));
+        ::close(timerFd_);
+        timerFd_ = -1;
+        running_.store(false);
+        return;
+    }
+
+    const double period_s = 1.0 / static_cast<double>(cfg_.fps);
+
+    itimerspec its{};
+    its.it_interval.tv_sec  = static_cast<time_t>(period_s);
+    its.it_interval.tv_nsec =
+        static_cast<long>((period_s - static_cast<double>(its.it_interval.tv_sec)) * 1e9);
+    its.it_value = its.it_interval;
+
+    if (::timerfd_settime(timerFd_, 0, &its, nullptr) != 0) {
+        log_.error(std::string("SimulatedPublisher: timerfd_settime failed: ") + std::strerror(errno));
+        ::close(stopFd_);
+        ::close(timerFd_);
+        stopFd_ = -1;
+        timerFd_ = -1;
+        running_.store(false);
+        return;
+    }
+
+    pollfd fds[2]{};
+    fds[0].fd = timerFd_;
+    fds[0].events = POLLIN;
+    fds[1].fd = stopFd_;
+    fds[1].events = POLLIN;
+
+    while (running_.load()) {
+        const int pr = ::poll(fds, 2, -1);
+        if (pr < 0) {
+            if (errno == EINTR) continue;
+            log_.error(std::string("SimulatedPublisher: poll failed: ") + std::strerror(errno));
+            break;
+        }
+
+        if (fds[1].revents & POLLIN) {
+            uint64_t v = 0;
+            (void)::read(stopFd_, &v, sizeof(v));
+            break;
+        }
+
+        if (fds[0].revents & POLLIN) {
+            uint64_t expirations = 0;
+            const ssize_t n = ::read(timerFd_, &expirations, sizeof(expirations));
+            if (n != static_cast<ssize_t>(sizeof(expirations))) continue;
+
+            FrameEvent fe;
+            fe.frame_id  = ++frameId_;
+            fe.t_capture = clock::now();
+            fe.width     = cfg_.width;
+            fe.height    = cfg_.height;
+
+            fe.data.reserve(static_cast<std::size_t>(cfg_.width) *
+                            static_cast<std::size_t>(cfg_.height));
+            generateFrame_(fe);
+
+            FrameCallback cb;
+            {
+                std::lock_guard<std::mutex> lock(cbMutex_);
+                cb = frameCb_;
+            }
+            if (cb) cb(fe);
+        }
+    }
+
+    ::close(stopFd_);
+    ::close(timerFd_);
+    stopFd_ = -1;
+    timerFd_ = -1;
+
+#elif defined(_WIN32)
+
+    // Windows: Waitable timer + stop event (no sleep-based timing)
+    stopEvent_ = CreateEvent(nullptr, TRUE, FALSE, nullptr); // manual reset
+    if (!stopEvent_) {
+        log_.error("SimulatedPublisher: CreateEvent failed");
+        running_.store(false);
+        return;
+    }
+
+    timer_ = CreateWaitableTimer(nullptr, FALSE, nullptr); // auto-reset timer
+    if (!timer_) {
+        log_.error("SimulatedPublisher: CreateWaitableTimer failed");
+        CloseHandle(stopEvent_);
+        stopEvent_ = nullptr;
+        running_.store(false);
+        return;
+    }
+
+    // Period in 100ns units; negative = relative time
+    const double period_s = 1.0 / static_cast<double>(cfg_.fps);
+    const LONGLONG period_100ns = static_cast<LONGLONG>(period_s * 10'000'000.0);
+
+    LARGE_INTEGER dueTime;
+    dueTime.QuadPart = -period_100ns; // first fire after one period
+
+    if (!SetWaitableTimer(timer_, &dueTime, static_cast<LONG>(period_s * 1000.0), nullptr, nullptr, FALSE)) {
+        log_.error("SimulatedPublisher: SetWaitableTimer failed");
+        CloseHandle(timer_);
+        CloseHandle(stopEvent_);
+        timer_ = nullptr;
+        stopEvent_ = nullptr;
+        running_.store(false);
+        return;
+    }
+
+    HANDLE handles[2] = { stopEvent_, timer_ };
+
+    while (running_.load()) {
+        const DWORD r = WaitForMultipleObjects(2, handles, FALSE, INFINITE);
+        if (!running_.load()) break;
+
+        if (r == WAIT_OBJECT_0) {
+            // stopEvent signaled
+            break;
+        }
+        if (r == WAIT_OBJECT_0 + 1) {
+            // timer fired
+            FrameEvent fe;
+            fe.frame_id  = ++frameId_;
+            fe.t_capture = clock::now();
+            fe.width     = cfg_.width;
+            fe.height    = cfg_.height;
+
+            fe.data.reserve(static_cast<std::size_t>(cfg_.width) *
+                            static_cast<std::size_t>(cfg_.height));
+            generateFrame_(fe);
+
+            FrameCallback cb;
+            {
+                std::lock_guard<std::mutex> lock(cbMutex_);
+                cb = frameCb_;
+            }
+            if (cb) cb(fe);
+        }
+    }
+
+    CancelWaitableTimer(timer_);
+    CloseHandle(timer_);
+    CloseHandle(stopEvent_);
+    timer_ = nullptr;
+    stopEvent_ = nullptr;
+
+#else
+    log_.error("SimulatedPublisher: unsupported platform");
+    running_.store(false);
+    return;
+#endif
 }
 
 void SimulatedPublisher::generateFrame_(FrameEvent& fe) {
@@ -276,52 +497,36 @@ void SimulatedPublisher::generateFrame_(FrameEvent& fe) {
     const int h = cfg_.height;
     const int r = std::max(1, cfg_.spot_radius);
 
-    // Background
     fe.data.assign(static_cast<std::size_t>(w) * static_cast<std::size_t>(h),
                    cfg_.background);
 
-    // Determine spot center
     float cx = w * 0.5f;
     float cy = h * 0.5f;
 
     if (cfg_.moving_spot) {
-        // Smooth circular motion around center
         phase_ += 0.05f;
-        const float ax = w * 0.25f;
-        const float ay = h * 0.20f;
-        cx = (w * 0.5f) + ax * std::cos(phase_);
-        cy = (h * 0.5f) + ay * std::sin(phase_ * 0.9f);
+        cx += w * 0.25f * std::cos(phase_);
+        cy += h * 0.20f * std::sin(phase_);
     }
-
-    // Debug log (optional)
-    log_.info("SIM spot cx=" + std::to_string(cx) + " cy=" + std::to_string(cy));
 
     const int icx = static_cast<int>(std::round(cx));
     const int icy = static_cast<int>(std::round(cy));
+    const int r2  = r * r;
 
-    // Draw a filled circle "sun spot"
-    const int r2 = r * r;
     for (int y = icy - r; y <= icy + r; ++y) {
         if (y < 0 || y >= h) continue;
-
         for (int x = icx - r; x <= icx + r; ++x) {
             if (x < 0 || x >= w) continue;
-
             const int dx = x - icx;
             const int dy = y - icy;
-
             if ((dx * dx + dy * dy) <= r2) {
-                const std::size_t idx =
-                    static_cast<std::size_t>(y) * static_cast<std::size_t>(w) +
-                    static_cast<std::size_t>(x);
-
-                fe.data[idx] = cfg_.spot_value;
+                fe.data[static_cast<std::size_t>(y) * static_cast<std::size_t>(w) +
+                        static_cast<std::size_t>(x)] = cfg_.spot_value;
             }
         }
     }
 
-    // Add Gaussian noise (only if enabled and distribution exists)
-    if (noise_.has_value()) {
+    if (noise_) {
         for (auto& px : fe.data) {
             float v = static_cast<float>(px) + (*noise_)(rng_);
             v = std::clamp(v, 0.0f, 255.0f);
