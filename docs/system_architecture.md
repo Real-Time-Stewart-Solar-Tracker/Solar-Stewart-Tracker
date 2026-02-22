@@ -278,29 +278,3 @@ AT->>AM: onCommand(ActuatorCommand)
 AM-->>AT: Safe ActuatorCommand
 AT->>SD: apply(Safe ActuatorCommand)
 ```
-## 3) State Diagram
-```mermaid
-
-stateDiagram-v2
-[*] --> IDLE
-IDLE --> STARTUP : start()
-STARTUP --> NEUTRAL : subsystems ready
-NEUTRAL --> SEARCHING : neutral applied
-SEARCHING --> TRACKING : confidence >= threshold
-TRACKING --> SEARCHING : confidence < threshold
-
-SEARCHING --> MANUAL : enterManual()
-TRACKING --> MANUAL : enterManual()
-MANUAL --> SEARCHING : exitManual()
-
-IDLE --> FAULT : start fails
-STARTUP --> FAULT : init error
-SEARCHING --> FAULT : unrecoverable error
-TRACKING --> FAULT : unrecoverable error
-MANUAL --> FAULT : unrecoverable error
-
-SEARCHING --> STOPPING : stop()
-TRACKING --> STOPPING : stop()
-MANUAL --> STOPPING : stop()
-STOPPING --> IDLE : threads joined
-```

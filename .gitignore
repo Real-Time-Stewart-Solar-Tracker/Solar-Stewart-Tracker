@@ -41,6 +41,31 @@ CTestTestfile.cmake
 *.suo
 
 # =========================
+# Doxygen generated output
+# =========================
+docs/doxygen/html/
+docs/doxygen/latex/
+docs/doxygen/xml/
+
+!docs/doxygen/Doxyfile
+
+# =========================
+# Coverage
+# =========================
+coverage/
+*.gcda
+*.gcno
+*.gcov
+
+# =========================
+# Temporary / editor files
+# =========================
+*.tmp
+*.bak
+*.swp
+*.cache
+
+# =========================
 # OS files
 # =========================
 .DS_Store
