@@ -49,47 +49,6 @@ This PNG is the authoritative architecture diagram for assessment.
 | FR5 Safety | ActuatorManager (T3) |
 | FR6 Logging/latency | Logger timestamps across pipeline |
 
-## Diagram (Mermaid source for editing)
-
-This Mermaid diagram is kept for easy editing by the team. If Mermaid rendering
-is not supported in a given viewer, refer to the PNG above.
-
-```mermaid
-flowchart LR
-
-subgraph T1[Thread T1 Camera]
-  C[CameraPublisher]
-end
-
-subgraph T2[Thread T2 Control]
-  Q1[SunEstimate Queue]
-  CTRL[Controller]
-  KIN[Kinematics3RRS]
-end
-
-subgraph T3[Thread T3 Actuator]
-  Q2[ActuatorCmd Queue]
-  ACTM[ActuatorManager]
-  DRV[Servo Driver]
-end
-
-TRK[SunTracker]
-LOG[Logger]
-
-C --> TRK
-TRK --> Q1
-Q1 --> CTRL
-CTRL --> KIN
-KIN --> Q2
-Q2 --> ACTM
-ACTM --> DRV
-
-C -.-> LOG
-TRK -.-> LOG
-CTRL -.-> LOG
-DRV -.-> LOG
-
-
 
 ## UML / Architecture Diagrams
 
