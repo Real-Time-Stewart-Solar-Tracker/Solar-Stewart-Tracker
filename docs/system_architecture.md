@@ -137,7 +137,6 @@ These diagrams describe the high-level, event-driven architecture of the Solar S
 ---
 
 ## 1) Class Diagram (High-Level)
-
 ```mermaid
 classDiagram
 direction LR
@@ -241,18 +240,21 @@ ICamera ..> FrameEvent : emits via callback
 SunTracker ..> SunEstimate
 Controller ..> PlatformSetpoint
 Kinematics3RRS ..> ActuatorCommand
+```
 
+## 2) Sequence Diagram — Runtime Pipeline
+```mermaid
 sequenceDiagram
 autonumber
 
-participant Cam as T1 Camera (backend thread)
+participant Cam as T1 Camera backend
 participant SM as SystemManager
-participant FQ as FrameQueue (cap=1)
+participant FQ as FrameQueue cap1
 participant CT as T2 Control thread
 participant ST as SunTracker
 participant C as Controller
 participant K as Kinematics3RRS
-participant CQ as CommandQueue (cap=1)
+participant CQ as CommandQueue cap1
 participant AT as T3 Actuator thread
 participant AM as ActuatorManager
 participant SD as ServoDriver
@@ -263,19 +265,21 @@ SM->>FQ: push_latest(FrameEvent)
 CT->>FQ: wait_pop()
 FQ-->>CT: FrameEvent
 CT->>ST: onFrame(FrameEvent)
-ST-->>CT: SunEstimate (via callback)
+ST-->>CT: SunEstimate
 CT->>C: onEstimate(SunEstimate)
-C-->>CT: PlatformSetpoint (via callback)
+C-->>CT: PlatformSetpoint
 CT->>K: onSetpoint(PlatformSetpoint)
-K-->>CT: ActuatorCommand (via callback)
+K-->>CT: ActuatorCommand
 CT->>CQ: push_latest(ActuatorCommand)
 
 AT->>CQ: wait_pop()
 CQ-->>AT: ActuatorCommand
 AT->>AM: onCommand(ActuatorCommand)
-AM-->>AT: Safe ActuatorCommand (via callback)
+AM-->>AT: Safe ActuatorCommand
 AT->>SD: apply(Safe ActuatorCommand)
-
+```
+## 3) State Diagram
+```mermaid
 
 stateDiagram-v2
 [*] --> IDLE
@@ -289,7 +293,7 @@ SEARCHING --> MANUAL : enterManual()
 TRACKING --> MANUAL : enterManual()
 MANUAL --> SEARCHING : exitManual()
 
-IDLE --> FAULT : start() fails
+IDLE --> FAULT : start fails
 STARTUP --> FAULT : init error
 SEARCHING --> FAULT : unrecoverable error
 TRACKING --> FAULT : unrecoverable error
@@ -298,4 +302,5 @@ MANUAL --> FAULT : unrecoverable error
 SEARCHING --> STOPPING : stop()
 TRACKING --> STOPPING : stop()
 MANUAL --> STOPPING : stop()
-STOPPING --> IDLE : threads joined, driver stopped
+STOPPING --> IDLE : threads joined
+```
