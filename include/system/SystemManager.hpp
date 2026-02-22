@@ -1,13 +1,19 @@
 #pragma once
 
+#include <atomic>
+#include <chrono>       // FIX: required for Times and msBetween_
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <mutex>
+#include <thread>
+#include <unordered_map>
 
 #include "actuators/ActuatorManager.hpp"
 #include "actuators/ServoDriver.hpp"
 #include "common/LatencyMonitor.hpp"
 #include "common/Logger.hpp"
+#include "common/ThreadSafeQueue.hpp"
 #include "common/Types.hpp"
 #include "control/Controller.hpp"
 #include "control/Kinematics3RRS.hpp"
@@ -20,35 +26,24 @@ namespace solar {
 /**
  * @brief Top-level system orchestrator for the solar tracking pipeline.
  *
- * Connects all subsystems:
- * - Camera acquisition
- * - Vision (SunTracker)
- * - Control (Controller)
- * - Kinematics (3RRS inverse kinematics)
- * - Actuator safety layer
- * - Servo driver
- * - Latency monitoring
+ * Architecture (implemented):
+ * - Camera backend emits FrameEvent via callback (camera owns capture thread)
+ * - SystemManager pushes FrameEvent into a bounded queue (freshest-data policy)
+ * - Control thread blocks on Frame queue and runs:
+ *      SunTracker -> Controller -> Kinematics3RRS
+ *   then pushes ActuatorCommand into a bounded queue
+ * - Actuator thread blocks on Command queue and runs:
+ *      ActuatorManager -> ServoDriver
  *
- * Implements lifecycle control and system state management.
+ * No polling loops or sleep-based timing are used in the realtime path.
  */
 class SystemManager {
 public:
-    /**
-     * @brief Observer callback for latency reporting.
-     *
-     * @param frame_id Frame identifier
-     * @param cap_to_est_ms Capture → estimate latency (ms)
-     * @param est_to_ctrl_ms Estimate → control latency (ms)
-     * @param ctrl_to_act_ms Control → actuation latency (ms)
-     */
     using LatencyObserver = std::function<void(uint64_t frame_id,
                                                float cap_to_est_ms,
                                                float est_to_ctrl_ms,
                                                float ctrl_to_act_ms)>;
 
-    /**
-     * @brief Construct the full system manager with all subsystem configurations.
-     */
     SystemManager(Logger& log,
                   std::unique_ptr<ICamera> camera,
                   SunTracker::Config trackerCfg,
@@ -60,59 +55,60 @@ public:
     SystemManager(const SystemManager&) = delete;
     SystemManager& operator=(const SystemManager&) = delete;
 
-    /// @brief Destructor stops the system if running.
     ~SystemManager();
 
-    /// @brief Start the full tracking pipeline.
     bool start();
-
-    /// @brief Stop the full tracking pipeline.
     void stop();
 
     // ------------------------------------------------------------------
     // State Machine API
     // ------------------------------------------------------------------
-
-    /// @brief Get current tracker state.
     TrackerState state() const;
 
-    /// @brief Enter manual control mode.
     void enterManual();
-
-    /// @brief Exit manual mode and resume automatic tracking.
     void exitManual();
 
-    /// @brief Set manual platform setpoint (used in manual mode).
     void setManualSetpoint(float tilt_rad, float pan_rad);
-
-    /// @brief Update vision threshold safely at runtime.
     void setTrackerThreshold(uint8_t thr);
 
     // ------------------------------------------------------------------
-    // Observers (Event-Driven Hooks for UI / Telemetry)
+    // Observers (UI / Telemetry hooks)
     // ------------------------------------------------------------------
-
-    /// @brief Register frame observer.
     void registerFrameObserver(ICamera::FrameCallback cb);
-
-    /// @brief Register estimate observer.
     void registerEstimateObserver(SunTracker::EstimateCallback cb);
-
-    /// @brief Register setpoint observer.
     void registerSetpointObserver(Controller::SetpointCallback cb);
-
-    /// @brief Register actuator command observer.
     void registerCommandObserver(Kinematics3RRS::CommandCallback cb);
-
-    /// @brief Register latency observer.
     void registerLatencyObserver(LatencyObserver cb);
 
 private:
-    /// @brief Internal helper for state transitions.
-    void setState_(TrackerState s);
+    // Thread loops
+    void controlLoop_();
+    void actuatorLoop_();
 
-    /// @brief Apply neutral actuator command once during transitions.
+    // Camera callback
+    void onFrame_(const FrameEvent& fe);
+
+    // State helpers
+    void setState_(TrackerState s);
     void applyNeutralOnce_();
+
+    // Live latency cache (for LatencyObserver)
+    struct Times {
+        std::chrono::steady_clock::time_point t_cap{};
+        std::chrono::steady_clock::time_point t_est{};
+        std::chrono::steady_clock::time_point t_ctrl{};
+        std::chrono::steady_clock::time_point t_act{};
+        bool has_cap{false};
+        bool has_est{false};
+        bool has_ctrl{false};
+        bool has_act{false};
+    };
+
+    static float msBetween_(const std::chrono::steady_clock::time_point& a,
+                            const std::chrono::steady_clock::time_point& b);
+
+    void capMapSize_();
+    void tryEmitLatency_(uint64_t frame_id);
 
     Logger& log_;
     std::unique_ptr<ICamera> camera_;
@@ -124,8 +120,29 @@ private:
     ServoDriver driver_;
     LatencyMonitor latency_;
 
-    bool running_{false};
-    TrackerState state_{TrackerState::IDLE};
+    // Bounded queues (freshest-data semantics)
+    ThreadSafeQueue<FrameEvent> frame_q_{1};       // keep latest frame
+    ThreadSafeQueue<ActuatorCommand> cmd_q_{1};    // keep latest command
+
+    // Worker threads
+    std::thread control_thread_;
+    std::thread actuator_thread_;
+
+    // Observers (no globals)
+    mutable std::mutex obs_mtx_;
+    ICamera::FrameCallback frame_obs_{};
+    SunTracker::EstimateCallback estimate_obs_{};
+    Controller::SetpointCallback setpoint_obs_{};
+    Kinematics3RRS::CommandCallback command_obs_{};
+    LatencyObserver latency_obs_{};
+
+    // Latency cache
+    mutable std::mutex lat_mtx_;
+    std::unordered_map<uint64_t, Times> times_;
+
+    // State
+    std::atomic<bool> running_{false};
+    std::atomic<TrackerState> state_{TrackerState::IDLE};
     float min_confidence_{0.0f};
 
     PlatformSetpoint manual_sp_{};

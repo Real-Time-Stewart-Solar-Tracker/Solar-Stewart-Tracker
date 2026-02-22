@@ -1,89 +1,55 @@
 #include "system/SystemManager.hpp"
 
-#include <chrono>
-#include <mutex>
 #include <string>
-#include <unordered_map>
 #include <utility>
 
 namespace solar {
 
-// -----------------------------------------------------------------------------
-// File-local observer storage (keeps header clean + avoids UI coupling)
-// -----------------------------------------------------------------------------
-namespace {
-std::mutex g_obs_mtx;
+static inline std::string stateToMsg(TrackerState s) {
+    return std::string("STATE -> ") + toString(s);
+}
 
-ICamera::FrameCallback              g_frame_obs;
-SunTracker::EstimateCallback        g_est_obs;
-Controller::SetpointCallback        g_setpoint_obs;
-Kinematics3RRS::CommandCallback     g_cmd_obs;
-SystemManager::LatencyObserver      g_lat_obs;
-
-// Per-frame timing cache for live latency computation (ms)
-struct Times {
-    std::chrono::steady_clock::time_point t_cap{};
-    std::chrono::steady_clock::time_point t_est{};
-    std::chrono::steady_clock::time_point t_ctrl{};
-    std::chrono::steady_clock::time_point t_act{};
-    bool has_cap{false};
-    bool has_est{false};
-    bool has_ctrl{false};
-    bool has_act{false};
-};
-
-// Keep it small and bounded: erase on completion, and also cap size.
-std::mutex g_lat_mtx;
-std::unordered_map<uint64_t, Times> g_times;
-
-static inline float msBetween(const std::chrono::steady_clock::time_point& a,
-                              const std::chrono::steady_clock::time_point& b) {
+float SystemManager::msBetween_(const std::chrono::steady_clock::time_point& a,
+                                const std::chrono::steady_clock::time_point& b) {
     return std::chrono::duration_cast<std::chrono::duration<float, std::milli>>(b - a).count();
 }
 
-static inline void capMapSize() {
-    // Very simple cap to prevent unbounded growth if something goes wrong.
+void SystemManager::capMapSize_() {
     constexpr std::size_t MAX_FRAMES = 4096;
-    if (g_times.size() <= MAX_FRAMES) return;
+    if (times_.size() <= MAX_FRAMES) return;
 
-    // Erase arbitrary old entries (not ordered). Good enough for safety.
-    auto it = g_times.begin();
-    const std::size_t toErase = g_times.size() - MAX_FRAMES;
-    for (std::size_t i = 0; i < toErase && it != g_times.end(); ++i) {
-        it = g_times.erase(it);
+    auto it = times_.begin();
+    const std::size_t toErase = times_.size() - MAX_FRAMES;
+    for (std::size_t i = 0; i < toErase && it != times_.end(); ++i) {
+        it = times_.erase(it);
     }
 }
 
-static inline void tryEmitLatency(uint64_t frame_id) {
-    SystemManager::LatencyObserver cb;
+void SystemManager::tryEmitLatency_(uint64_t frame_id) {
+    LatencyObserver cb;
     {
-        std::lock_guard<std::mutex> lk(g_obs_mtx);
-        cb = g_lat_obs;
+        std::lock_guard<std::mutex> lk(obs_mtx_);
+        cb = latency_obs_;
     }
     if (!cb) return;
 
     Times t{};
     {
-        std::lock_guard<std::mutex> lk(g_lat_mtx);
-        auto it = g_times.find(frame_id);
-        if (it == g_times.end()) return;
-        t = it->second;
+        std::lock_guard<std::mutex> lk(lat_mtx_);
+        auto it = times_.find(frame_id);
+        if (it == times_.end()) return;
 
-        // Emit only when we have the full chain
+        t = it->second;
         if (!(t.has_cap && t.has_est && t.has_ctrl && t.has_act)) return;
 
-        // Done -> erase immediately
-        g_times.erase(it);
+        times_.erase(it);
     }
 
-    const float cap_to_est = msBetween(t.t_cap,  t.t_est);
-    const float est_to_ctl = msBetween(t.t_est,  t.t_ctrl);
-    const float ctl_to_act = msBetween(t.t_ctrl, t.t_act);
-
-    cb(frame_id, cap_to_est, est_to_ctl, ctl_to_act);
+    cb(frame_id,
+       msBetween_(t.t_cap,  t.t_est),
+       msBetween_(t.t_est,  t.t_ctrl),
+       msBetween_(t.t_ctrl, t.t_act));
 }
-
-} // namespace
 
 // -----------------------------------------------------------------------------
 // SystemManager
@@ -105,117 +71,91 @@ SystemManager::SystemManager(Logger& log,
       latency_(log_),
       min_confidence_(controllerCfg.min_confidence) {
 
-    // Camera -> SunTracker (+ frame observer)
+    // Camera -> queue
     if (camera_) {
         camera_->registerFrameCallback([this](const FrameEvent& fe) {
-            latency_.onCapture(fe.frame_id, fe.t_capture);
-
-            // cache capture time for live latency
-            {
-                std::lock_guard<std::mutex> lk(g_lat_mtx);
-                auto& ts = g_times[fe.frame_id];
-                ts.t_cap = fe.t_capture;
-                ts.has_cap = true;
-                capMapSize();
-            }
-
-            // observer hook
-            ICamera::FrameCallback cb;
-            {
-                std::lock_guard<std::mutex> lk(g_obs_mtx);
-                cb = g_frame_obs;
-            }
-            if (cb) cb(fe);
-
-            tracker_.onFrame(fe);
+            onFrame_(fe);
         });
     }
 
-    // SunTracker -> Controller (+ estimate observer, + SEARCHING/TRACKING transitions)
+    // SunTracker -> Controller
     tracker_.registerEstimateCallback([this](const SunEstimate& est) {
         latency_.onEstimate(est.frame_id, est.t_estimate);
 
-        // cache estimate time for live latency
         {
-            std::lock_guard<std::mutex> lk(g_lat_mtx);
-            auto& ts = g_times[est.frame_id];
+            std::lock_guard<std::mutex> lk(lat_mtx_);
+            auto& ts = times_[est.frame_id];
             ts.t_est = est.t_estimate;
             ts.has_est = true;
-            capMapSize();
+            capMapSize_();
         }
 
-        // observer hook
         SunTracker::EstimateCallback cb;
         {
-            std::lock_guard<std::mutex> lk(g_obs_mtx);
-            cb = g_est_obs;
+            std::lock_guard<std::mutex> lk(obs_mtx_);
+            cb = estimate_obs_;
         }
         if (cb) cb(est);
 
-        // confidence drives SEARCHING/TRACKING (unless MANUAL/FAULT)
-        if (running_ && state_ != TrackerState::MANUAL && state_ != TrackerState::FAULT) {
+        if (running_.load() &&
+            state_.load() != TrackerState::MANUAL &&
+            state_.load() != TrackerState::FAULT) {
             if (est.confidence >= min_confidence_) setState_(TrackerState::TRACKING);
             else                                   setState_(TrackerState::SEARCHING);
         }
 
-        // In MANUAL mode, ignore AUTO controller updates
-        if (state_ != TrackerState::MANUAL) {
+        if (state_.load() != TrackerState::MANUAL) {
             controller_.onEstimate(est);
         }
     });
 
-    // Controller -> Kinematics (+ setpoint observer)
+    // Controller -> Kinematics
     controller_.registerSetpointCallback([this](const PlatformSetpoint& sp) {
         latency_.onControl(sp.frame_id, sp.t_control);
 
-        // cache control time for live latency
         {
-            std::lock_guard<std::mutex> lk(g_lat_mtx);
-            auto& ts = g_times[sp.frame_id];
+            std::lock_guard<std::mutex> lk(lat_mtx_);
+            auto& ts = times_[sp.frame_id];
             ts.t_ctrl = sp.t_control;
             ts.has_ctrl = true;
-            capMapSize();
+            capMapSize_();
         }
 
-        // observer hook
         Controller::SetpointCallback cb;
         {
-            std::lock_guard<std::mutex> lk(g_obs_mtx);
-            cb = g_setpoint_obs;
+            std::lock_guard<std::mutex> lk(obs_mtx_);
+            cb = setpoint_obs_;
         }
         if (cb) cb(sp);
 
         kinematics_.onSetpoint(sp);
     });
 
-    // Kinematics -> ActuatorManager (+ command observer)
+    // Kinematics -> cmd queue
     kinematics_.registerCommandCallback([this](const ActuatorCommand& cmd) {
-        // observer hook
         Kinematics3RRS::CommandCallback cb;
         {
-            std::lock_guard<std::mutex> lk(g_obs_mtx);
-            cb = g_cmd_obs;
+            std::lock_guard<std::mutex> lk(obs_mtx_);
+            cb = command_obs_;
         }
         if (cb) cb(cmd);
 
-        actuatorMgr_.onCommand(cmd);
+        (void)cmd_q_.push_latest(cmd);
     });
 
-    // ActuatorManager -> ServoDriver (+ latency complete)
+    // ActuatorManager -> ServoDriver
     actuatorMgr_.registerSafeCommandCallback([this](const ActuatorCommand& safeCmd) {
         latency_.onActuate(safeCmd.frame_id, safeCmd.t_actuate);
 
-        // cache actuate time for live latency, then try emit
         {
-            std::lock_guard<std::mutex> lk(g_lat_mtx);
-            auto& ts = g_times[safeCmd.frame_id];
+            std::lock_guard<std::mutex> lk(lat_mtx_);
+            auto& ts = times_[safeCmd.frame_id];
             ts.t_act = safeCmd.t_actuate;
             ts.has_act = true;
-            capMapSize();
+            capMapSize_();
         }
 
-        tryEmitLatency(safeCmd.frame_id);
-
+        tryEmitLatency_(safeCmd.frame_id);
         driver_.apply(safeCmd);
     });
 }
@@ -224,8 +164,29 @@ SystemManager::~SystemManager() {
     stop();
 }
 
+void SystemManager::onFrame_(const FrameEvent& fe) {
+    latency_.onCapture(fe.frame_id, fe.t_capture);
+
+    {
+        std::lock_guard<std::mutex> lk(lat_mtx_);
+        auto& ts = times_[fe.frame_id];
+        ts.t_cap = fe.t_capture;
+        ts.has_cap = true;
+        capMapSize_();
+    }
+
+    ICamera::FrameCallback cb;
+    {
+        std::lock_guard<std::mutex> lk(obs_mtx_);
+        cb = frame_obs_;
+    }
+    if (cb) cb(fe);
+
+    (void)frame_q_.push_latest(fe);
+}
+
 bool SystemManager::start() {
-    if (running_) return true;
+    if (running_.load()) return true;
 
     setState_(TrackerState::STARTUP);
 
@@ -241,12 +202,27 @@ bool SystemManager::start() {
         return false;
     }
 
-    // IMPORTANT: set running_ before camera starts producing callbacks
-    running_ = true;
+    // reset queues for clean run
+    frame_q_.clear();
+    cmd_q_.clear();
+    frame_q_.reset();
+    cmd_q_.reset();
+
+    // Start worker threads before camera starts producing frames
+    running_.store(true);
+    control_thread_  = std::thread([this] { controlLoop_(); });
+    actuator_thread_ = std::thread([this] { actuatorLoop_(); });
 
     if (!camera_->start()) {
         log_.error("SystemManager: Camera start failed");
-        running_ = false;
+
+        frame_q_.stop();
+        cmd_q_.stop();
+
+        if (control_thread_.joinable())  control_thread_.join();
+        if (actuator_thread_.joinable()) actuator_thread_.join();
+
+        running_.store(false);
         driver_.stop();
         setState_(TrackerState::FAULT);
         return false;
@@ -261,16 +237,24 @@ bool SystemManager::start() {
 }
 
 void SystemManager::stop() {
-    if (!running_) return;
+    if (!running_.load()) return;
 
     setState_(TrackerState::STOPPING);
 
+    // Send neutral while pipeline still running
     applyNeutralOnce_();
 
     if (camera_) camera_->stop();
+
+    frame_q_.stop();
+    cmd_q_.stop();
+
+    if (control_thread_.joinable())  control_thread_.join();
+    if (actuator_thread_.joinable()) actuator_thread_.join();
+
     driver_.stop();
 
-    running_ = false;
+    running_.store(false);
 
     latency_.printSummary();
 
@@ -279,52 +263,67 @@ void SystemManager::stop() {
 }
 
 // -----------------------------------------------------------------------------
+// Threads
+// -----------------------------------------------------------------------------
+void SystemManager::controlLoop_() {
+    while (auto fe = frame_q_.wait_pop()) {
+        tracker_.onFrame(*fe);
+    }
+}
+
+void SystemManager::actuatorLoop_() {
+    while (auto cmd = cmd_q_.wait_pop()) {
+        actuatorMgr_.onCommand(*cmd);
+    }
+}
+
+// -----------------------------------------------------------------------------
 // Observer API
 // -----------------------------------------------------------------------------
 void SystemManager::registerFrameObserver(ICamera::FrameCallback cb) {
-    std::lock_guard<std::mutex> lk(g_obs_mtx);
-    g_frame_obs = std::move(cb);
+    std::lock_guard<std::mutex> lk(obs_mtx_);
+    frame_obs_ = std::move(cb);
 }
 
 void SystemManager::registerEstimateObserver(SunTracker::EstimateCallback cb) {
-    std::lock_guard<std::mutex> lk(g_obs_mtx);
-    g_est_obs = std::move(cb);
+    std::lock_guard<std::mutex> lk(obs_mtx_);
+    estimate_obs_ = std::move(cb);
 }
 
 void SystemManager::registerSetpointObserver(Controller::SetpointCallback cb) {
-    std::lock_guard<std::mutex> lk(g_obs_mtx);
-    g_setpoint_obs = std::move(cb);
+    std::lock_guard<std::mutex> lk(obs_mtx_);
+    setpoint_obs_ = std::move(cb);
 }
 
 void SystemManager::registerCommandObserver(Kinematics3RRS::CommandCallback cb) {
-    std::lock_guard<std::mutex> lk(g_obs_mtx);
-    g_cmd_obs = std::move(cb);
+    std::lock_guard<std::mutex> lk(obs_mtx_);
+    command_obs_ = std::move(cb);
 }
 
 void SystemManager::registerLatencyObserver(LatencyObserver cb) {
-    std::lock_guard<std::mutex> lk(g_obs_mtx);
-    g_lat_obs = std::move(cb);
+    std::lock_guard<std::mutex> lk(obs_mtx_);
+    latency_obs_ = std::move(cb);
 }
 
 // -----------------------------------------------------------------------------
 // State machine API
 // -----------------------------------------------------------------------------
 TrackerState SystemManager::state() const {
-    return state_;
+    return state_.load();
 }
 
 void SystemManager::enterManual() {
-    if (state_ == TrackerState::FAULT) return;
+    if (state_.load() == TrackerState::FAULT) return;
     setState_(TrackerState::MANUAL);
 }
 
 void SystemManager::exitManual() {
-    if (state_ == TrackerState::FAULT) return;
+    if (state_.load() == TrackerState::FAULT) return;
     setState_(TrackerState::SEARCHING);
 }
 
 void SystemManager::setManualSetpoint(float tilt_rad, float pan_rad) {
-    if (state_ != TrackerState::MANUAL) return;
+    if (state_.load() != TrackerState::MANUAL) return;
 
     PlatformSetpoint sp;
     sp.frame_id = 0;
@@ -336,7 +335,6 @@ void SystemManager::setManualSetpoint(float tilt_rad, float pan_rad) {
 }
 
 void SystemManager::setTrackerThreshold(uint8_t thr) {
-    // requires SunTracker::setThreshold(uint8_t) in your SunTracker class
     tracker_.setThreshold(thr);
 }
 
@@ -344,9 +342,9 @@ void SystemManager::setTrackerThreshold(uint8_t thr) {
 // Helpers
 // -----------------------------------------------------------------------------
 void SystemManager::setState_(TrackerState s) {
-    if (state_ == s) return;
-    state_ = s;
-    log_.info(std::string("STATE -> ") + toString(state_));
+    if (state_.load() == s) return;
+    state_.store(s);
+    log_.info(stateToMsg(s));
 }
 
 void SystemManager::applyNeutralOnce_() {

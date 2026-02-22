@@ -12,7 +12,7 @@ namespace solar {
 /**
  * @brief Blocking, thread-safe queue for event-driven systems.
  *
- * Provides safe multi-producer / multi-consumer semantics.
+ * Multi-producer / multi-consumer.
  *
  * Lifecycle semantics:
  * - stop(): prevents further pushes and wakes all waiting threads.
@@ -20,15 +20,21 @@ namespace solar {
  * - Once stopped and empty, wait_pop() returns std::nullopt.
  * - reset(): re-enables queue (useful for tests or controlled restarts).
  *
- * No polling or sleep-based timing is used.
+ * Realtime support:
+ * - Optional bounded capacity (0 = unbounded).
+ * - push_latest(): if full, drops oldest item so newest is kept.
  *
- * @tparam T Type of elements stored in the queue.
+ * No polling or sleep-based timing is used.
  */
 template <typename T>
 class ThreadSafeQueue {
 public:
-    /// @brief Default constructor.
+    /// @brief Default constructor (unbounded).
     ThreadSafeQueue() = default;
+
+    /// @brief Construct queue with optional capacity (0 = unbounded).
+    explicit ThreadSafeQueue(std::size_t capacity)
+        : capacity_(capacity) {}
 
     ThreadSafeQueue(const ThreadSafeQueue&) = delete;
     ThreadSafeQueue& operator=(const ThreadSafeQueue&) = delete;
@@ -37,14 +43,14 @@ public:
     ~ThreadSafeQueue() { stop(); }
 
     /**
-     * @brief Push an item by copy.
-     * @param item Item to enqueue.
-     * @return false if the queue is stopped and the item was not queued.
+     * @brief Push by copy (strict when bounded).
+     * @return false if stopped or (bounded and full).
      */
     bool push(const T& item) {
         {
             std::lock_guard<std::mutex> lock(m_);
             if (stopped_) return false;
+            if (capacity_ > 0 && q_.size() >= capacity_) return false;
             q_.push_back(item);
         }
         cv_.notify_one();
@@ -52,14 +58,36 @@ public:
     }
 
     /**
-     * @brief Push an item by move.
-     * @param item Item to enqueue.
-     * @return false if the queue is stopped and the item was not queued.
+     * @brief Push by move (strict when bounded).
+     * @return false if stopped or (bounded and full).
      */
     bool push(T&& item) {
         {
             std::lock_guard<std::mutex> lock(m_);
             if (stopped_) return false;
+            if (capacity_ > 0 && q_.size() >= capacity_) return false;
+            q_.push_back(std::move(item));
+        }
+        cv_.notify_one();
+        return true;
+    }
+
+    /**
+     * @brief Push keeping the latest element when bounded.
+     *
+     * If bounded and full, drops the oldest item so the newest is enqueued.
+     * This is ideal for realtime pipelines where freshness > completeness.
+     *
+     * @return false if stopped.
+     */
+    bool push_latest(T item) {
+        {
+            std::lock_guard<std::mutex> lock(m_);
+            if (stopped_) return false;
+
+            if (capacity_ > 0 && q_.size() >= capacity_) {
+                q_.pop_front(); // drop oldest
+            }
             q_.push_back(std::move(item));
         }
         cv_.notify_one();
@@ -68,15 +96,13 @@ public:
 
     /**
      * @brief Block until an item is available or the queue is stopped.
-     * @return Popped value, or std::nullopt if stopped and empty.
+     * @return item, or std::nullopt if stopped and empty.
      */
     std::optional<T> wait_pop() {
         std::unique_lock<std::mutex> lock(m_);
         cv_.wait(lock, [&] { return stopped_ || !q_.empty(); });
 
-        if (q_.empty()) {
-            return std::nullopt;
-        }
+        if (q_.empty()) return std::nullopt;
 
         T item = std::move(q_.front());
         q_.pop_front();
@@ -84,8 +110,8 @@ public:
     }
 
     /**
-     * @brief Attempt to pop an item without blocking.
-     * @return Popped value, or std::nullopt if empty.
+     * @brief Non-blocking pop.
+     * @return item, or std::nullopt if empty.
      */
     std::optional<T> try_pop() {
         std::lock_guard<std::mutex> lock(m_);
@@ -97,7 +123,7 @@ public:
     }
 
     /**
-     * @brief Stop the queue and wake all waiting threads.
+     * @brief Stop queue and wake all waiting threads.
      *
      * Prevents further pushes. Remaining items may still be drained.
      */
@@ -113,7 +139,7 @@ public:
     void close() { stop(); }
 
     /**
-     * @brief Re-enable the queue after stop().
+     * @brief Re-enable queue after stop().
      *
      * Does not clear existing items.
      */
@@ -123,22 +149,20 @@ public:
     }
 
     /**
-     * @brief Remove all queued items.
-     *
-     * Does not modify the stopped state.
+     * @brief Clear all queued items (does not change stopped state).
      */
     void clear() {
         std::lock_guard<std::mutex> lock(m_);
         q_.clear();
     }
 
-    /// @brief Get current number of queued items.
+    /// @brief Current number of queued items.
     std::size_t size() const {
         std::lock_guard<std::mutex> lock(m_);
         return q_.size();
     }
 
-    /// @brief Check whether the queue has been stopped.
+    /// @brief True if stop() has been called.
     bool stopped() const {
         std::lock_guard<std::mutex> lock(m_);
         return stopped_;
@@ -148,6 +172,7 @@ private:
     mutable std::mutex m_;
     std::condition_variable cv_;
     std::deque<T> q_;
+    std::size_t capacity_{0}; // 0 = unbounded
     bool stopped_{false};
 };
 
