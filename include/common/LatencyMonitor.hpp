@@ -41,7 +41,8 @@ public:
     };
 
     /// @brief Construct monitor with logger and optional configuration.
-    explicit LatencyMonitor(Logger& log, Config cfg = {});
+    explicit LatencyMonitor(Logger& log) : LatencyMonitor(log, Config{}) {}
+    explicit LatencyMonitor(Logger& log, Config cfg);
 
     /// @brief Destructor.
     ~LatencyMonitor();
