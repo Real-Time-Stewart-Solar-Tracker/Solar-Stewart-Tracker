@@ -2,7 +2,7 @@
 
 This document describes the unit testing approach used in the Solar Stewart Tracker project.
 
-The goal is to provide quantitative evidence of correctness and robustness in accordance with A1-level assessment criteria.
+The goal is to provide quantitative evidence of correctness and robustness 
 
 ---
 
@@ -161,4 +161,3 @@ The project includes:
 - Reproducible CTest integration
 - Separation of logic and hardware
 
-This demonstrates a professional testing strategy suitable for A1 assessment.

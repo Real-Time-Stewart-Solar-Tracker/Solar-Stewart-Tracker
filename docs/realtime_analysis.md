@@ -184,4 +184,3 @@ The Solar Stewart Tracker:
 - Quantifies average, worst-case and jitter latency.
 - Demonstrates engineering reasoning based on measured data.
 
-The system satisfies A1/A2 realtime coding criteria.

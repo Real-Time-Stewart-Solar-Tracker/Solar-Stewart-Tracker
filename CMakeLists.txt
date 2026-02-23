@@ -87,15 +87,38 @@ endif()
 # -----------------------------
 enable_testing()
 
-set(TEST_SOURCES
+# Shared test framework sources (provides Register + main runner)
+set(TEST_FRAMEWORK
     tests/test_main.cpp
     tests/test_common.hpp
+)
+
+# Core logic tests
+add_executable(test_core
+    ${TEST_FRAMEWORK}
     tests/test_suntracker.cpp
     tests/test_controller.cpp
 )
+target_include_directories(test_core PRIVATE include tests)
+target_link_libraries(test_core PRIVATE solar_tracker_core)
+add_test(NAME core_tests COMMAND test_core)
 
-add_executable(solar_tracker_tests ${TEST_SOURCES})
-target_include_directories(solar_tracker_tests PRIVATE include tests)
-target_link_libraries(solar_tracker_tests PRIVATE solar_tracker_core)
+# PCA9685 driver tests
+add_executable(test_pca9685
+    ${TEST_FRAMEWORK}
+    tests/test_pca9685.cpp
+    tests/FakeI2CDevice.hpp
+)
+target_include_directories(test_pca9685 PRIVATE include tests)
+target_link_libraries(test_pca9685 PRIVATE solar_tracker_core)
+add_test(NAME pca9685_tests COMMAND test_pca9685)
 
-add_test(NAME solar_tracker_unit_tests COMMAND solar_tracker_tests)
+# ServoDriver hardware-abstraction tests
+add_executable(test_servodriver
+    ${TEST_FRAMEWORK}
+    tests/test_servodriver.cpp
+    tests/FakeI2CDevice.hpp
+)
+target_include_directories(test_servodriver PRIVATE include tests)
+target_link_libraries(test_servodriver PRIVATE solar_tracker_core)
+add_test(NAME servodriver_tests COMMAND test_servodriver)
