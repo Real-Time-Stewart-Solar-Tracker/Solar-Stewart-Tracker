@@ -38,8 +38,10 @@ public:
      * @param i2c Shared I2C device instance (must outlive this driver).
      * @param cfg Driver configuration.
      */
-    explicit PCA9685(std::shared_ptr<solar::hal::II2CDevice> i2c, Config cfg = {}) noexcept;
+    explicit PCA9685(std::shared_ptr<solar::hal::II2CDevice> i2c) noexcept
+        : PCA9685(std::move(i2c), Config{}) {}
 
+explicit PCA9685(std::shared_ptr<solar::hal::II2CDevice> i2c, Config cfg) noexcept;
     PCA9685(const PCA9685&)            = delete;
     PCA9685& operator=(const PCA9685&) = delete;
 
