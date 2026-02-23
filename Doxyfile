@@ -4,7 +4,7 @@ PROJECT_NAME           = "Solar Stewart Tracker"
 PROJECT_NUMBER         = "1.0"
 PROJECT_BRIEF          = "Real-time embedded solar tracking system using 3RRS platform."
 
-OUTPUT_DIRECTORY       = docs/doxygen
+OUTPUT_DIRECTORY       = build/docs
 CREATE_SUBDIRS         = NO
 
 OUTPUT_LANGUAGE        = English
@@ -69,4 +69,4 @@ SHOW_FILES             = YES
 SHOW_NAMESPACES        = YES
 
 CLASS_DIAGRAMS         = YES
-HAVE_DOT               = NO
+HAVE_DOT               = YES
