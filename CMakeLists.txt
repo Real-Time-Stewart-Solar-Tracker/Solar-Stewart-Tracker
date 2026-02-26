@@ -101,7 +101,6 @@ add_executable(test_core
 )
 target_include_directories(test_core PRIVATE include tests)
 target_link_libraries(test_core PRIVATE solar_tracker_core)
-add_test(NAME core_tests COMMAND test_core)
 
 # PCA9685 driver tests
 add_executable(test_pca9685
@@ -111,7 +110,6 @@ add_executable(test_pca9685
 )
 target_include_directories(test_pca9685 PRIVATE include tests)
 target_link_libraries(test_pca9685 PRIVATE solar_tracker_core)
-add_test(NAME pca9685_tests COMMAND test_pca9685)
 
 # ServoDriver hardware-abstraction tests
 add_executable(test_servodriver
@@ -121,4 +119,44 @@ add_executable(test_servodriver
 )
 target_include_directories(test_servodriver PRIVATE include tests)
 target_link_libraries(test_servodriver PRIVATE solar_tracker_core)
-add_test(NAME servodriver_tests COMMAND test_servodriver)
+# --- Per-test registration (so CTest shows 1/N like your screenshot) ---
+
+# SunTracker tests (in test_core)
+add_test(NAME SunTracker_NoBrightPixels_ConfidenceZero
+         COMMAND test_core --run SunTracker_NoBrightPixels_ConfidenceZero)
+
+add_test(NAME SunTracker_BrightSpot_CentroidApproxCorrect
+         COMMAND test_core --run SunTracker_BrightSpot_CentroidApproxCorrect)
+
+add_test(NAME SunTracker_BrightSpot_HigherAreaHigherConfidence
+         COMMAND test_core --run SunTracker_BrightSpot_HigherAreaHigherConfidence)
+
+# Controller tests (in test_core)
+add_test(NAME Controller_LowConfidence_NoMotion
+         COMMAND test_core --run Controller_LowConfidence_NoMotion)
+
+add_test(NAME Controller_WithinDeadband_NoMotion
+         COMMAND test_core --run Controller_WithinDeadband_NoMotion)
+
+add_test(NAME Controller_OutsideDeadband_ProducesMotion
+         COMMAND test_core --run Controller_OutsideDeadband_ProducesMotion)
+
+add_test(NAME Controller_OutputClamped
+         COMMAND test_core --run Controller_OutputClamped)
+
+# PCA9685 tests
+add_test(NAME PCA9685_init_writes_mode_and_prescale
+         COMMAND test_pca9685 --run PCA9685_init_writes_mode_and_prescale)
+
+add_test(NAME PCA9685_set_pwm_writes_led_register_block
+         COMMAND test_pca9685 --run PCA9685_set_pwm_writes_led_register_block)
+
+add_test(NAME PCA9685_set_pulse_us_uses_frequency_conversion
+         COMMAND test_pca9685 --run PCA9685_set_pulse_us_uses_frequency_conversion)
+
+# ServoDriver tests
+add_test(NAME ServoDriver_start_parks_to_neutral_when_enabled
+         COMMAND test_servodriver --run ServoDriver_start_parks_to_neutral_when_enabled)
+
+add_test(NAME ServoDriver_apply_clamps_and_writes_channels
+         COMMAND test_servodriver --run ServoDriver_apply_clamps_and_writes_channels)
