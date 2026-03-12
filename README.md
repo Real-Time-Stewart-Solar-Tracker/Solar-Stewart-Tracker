@@ -7,7 +7,7 @@ SolidWorks 机械结构模型
 
 ### 目录结构
 
-- `3rrs/` - 包含所有 SolidWorks 零件和装配体文件
+- `diagrams/mechanical model/3rrs/` - 包含所有 SolidWorks 零件和装配体文件
   - 伺服电机和支架组件
   - 双轴伺服装配体
   - 运动平台和静态平台
