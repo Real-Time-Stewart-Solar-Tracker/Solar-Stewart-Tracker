@@ -1,6 +1,6 @@
-ï»¿# Bill of Materials (BOM) | ç‰©æ–™æ¸…å•
+# Bill of Materials (BOM) | ÎïÁÏÇåµ¥
 
-[English](#english) | [ä¸­æ–‡](#ä¸­æ–‡)
+[English](#english) | [ÖĞÎÄ](#ÖĞÎÄ)
 
 ---
 
@@ -13,112 +13,113 @@
 | **Computation** | Raspberry Pi 5 | 4GB RAM Version | 1 | Core brain running 50Hz real-time IK solver |
 | **Actuation** | Digital Servo | RDS3230 (30kg/Dual-axis) | 3 | High-torque actuators for 3RRS parallel platform |
 | **Driver** | PWM Driver Board | PCA9685 (16-Channel I2C) | 1 | Hardware PWM expansion to ensure real-time control |
-| **Vision** | Camera Module | IMX219 (120Â° FOV/CSI) | 1 | Centroid extraction for active vision closed-loop |
+| **Vision** | Camera Module | IMX219 (120¡ã FOV/CSI) | 1 | Centroid extraction for active vision closed-loop |
 | **Power Supply** | DC Power Adapter | 6V 8A (Industrial Grade) | 1 | Prevents voltage sags during simultaneous high-torque movements |
 | **Rotary Joint** | Y-Clevis / I-Joint | SC Standard (M6/Rotary) | 3 sets | Intermediate revolute joint for 3RRS, ensuring precise single-DOF rotation |
-| **S-Joint Alt.** | Rod End Ball Joint (Fish-eye) | XUDZ SA6T/K (M6Ã—1.02 thread) | 3 | Intermediate revolute joint for 3RRS, ensuring precise single-DOF rotation |
+| **S-Joint Alt.** | Rod End Ball Joint (Fish-eye) | XUDZ SA6T/K (M6¡Á1.02 thread) | 3 | Intermediate revolute joint for 3RRS, ensuring precise single-DOF rotation |
 | **Fasteners** | SS Bolts & Nuts | M2, M3, M6 Assorted | N/A | High-strength assembly for overall structural reliability |
 | **Connectivity** | DC Jack & FPC Cable | 5.5mm Jack / 300mm FPC | 1 ea. | Reliable power input and high-speed data link for Pi 5 |
 
 ---
 
-## ä¸­æ–‡
+## ÖĞÎÄ
 
-### 3RRS å¤ªé˜³èƒ½ Stewart è¿½è¸ªå™¨ - ç»„ä»¶æ¸…å•
+### 3RRS Ì«ÑôÄÜ Stewart ×·×ÙÆ÷ - ×é¼şÇåµ¥
 
-| ç±»åˆ« | ç»„ä»¶åç§° | è§„æ ¼/å‹å· | æ•°é‡ | å…³é”®ç”¨é€” |
+| Àà±ğ | ×é¼şÃû³Æ | ¹æ¸ñ/ĞÍºÅ | ÊıÁ¿ | ¹Ø¼üÓÃÍ¾ |
 |------|----------|-----------|------|----------|
-| **è®¡ç®—å•å…ƒ** | æ ‘è“æ´¾ 5 | 4GB RAM ç‰ˆæœ¬ | 1 | ç³»ç»Ÿå¤§è„‘ï¼Œè¿è¡Œ 50Hz å®æ—¶é€†è¿åŠ¨å­¦è§£ç®— |
-| **æ‰§è¡Œæœºæ„** | æ•°å­—èˆµæœº | RDS3230 (30kg/åŒè½´) | 3 | 3RRS å¹³å°çš„åŠ¨åŠ›æºï¼Œæä¾›é«˜åˆšåº¦åŠ¨æ€è¾“å‡º |
-| **é©±åŠ¨æ¨¡å—** | èˆµæœºé©±åŠ¨æ¿ | PCA9685 (16è·¯/I2Cæ¥å£) | 1 | ç¡¬ä»¶çº§ PWM æ‰©å±•ï¼Œä¿éšœæ§åˆ¶ä¿¡å·çš„å®æ—¶ç¨³å®šæ€§ |
-| **è§†è§‰æ„ŸçŸ¥** | é«˜æ¸…æ‘„åƒå¤´ | IMX219 (120Â°å¹¿è§’/CSI) | 1 | å®æ—¶æ•è·å…‰æºè´¨å¿ƒï¼Œå®ç°ä¸»åŠ¨è§†è§‰é—­ç¯è¿½è¸ª |
-| **ä¾›ç”µç³»ç»Ÿ** | DC ç”µæºé€‚é…å™¨ | 6V 8A (å·¥ä¸šçº§ç¨³å‹) | 1 | ä¸ºèˆµæœºç¾¤æä¾›ç¨³å¥ç”µæµï¼Œæ¶ˆé™¤é«˜é¢‘åŠ¨ä½œä¸‹çš„ç”µå‹è·Œè½ |
-| **è½¬åŠ¨å‰¯** | Yå‹/Iå‹æ¥å¤´å…¨å¥— | SCæ ‡å‡†ä»¶ (M6/å›ºå®šæ—‹è½¬) | 3å¥— | ä½œä¸º 3RRS æœºæ„çš„ä¸­é—´è½¬åŠ¨å…³èŠ‚ï¼Œç¡®ä¿ç²¾ç¡®çš„å•è‡ªç”±åº¦æ—‹è½¬ |
-| **Så…³èŠ‚æ›¿ä»£** | é±¼çœ¼å…³èŠ‚ | XUDZ SA6T/K (M6Ã—1.02ä¸) | 3 | ä½œä¸º 3RRS æœºæ„çš„ä¸­é—´è½¬åŠ¨å…³èŠ‚ï¼Œç¡®ä¿ç²¾ç¡®çš„å•è‡ªç”±åº¦æ—‹è½¬ |
-| **ç´§å›ºç¡¬ä»¶** | ä¸é”ˆé’¢èºä¸/èºæ¯ | M2, M3, M6 (å¤šç§è§„æ ¼) | è‹¥å¹² | å…¨ç³»ç»Ÿé«˜å¼ºåº¦æœºæ¢°ç»„è£…ï¼Œç¡®ä¿æŒä¹…ç»“æ„ç¨³å®šæ€§ |
-| **æ¥å£çº¿æ** | DCè½¬æ¥/FPCçº¿ | 5.5mm æ¯å¤´ / 300mm æ’çº¿ | å„ 1 | è§£å†³ç”µæºå¼•å…¥ä¸æ ‘è“æ´¾ 5 çš„é•¿è·ç¦»è§†è§‰ä¼ è¾“ |
+| **¼ÆËãµ¥Ôª** | Ê÷İ®ÅÉ 5 | 4GB RAM °æ±¾ | 1 | ÏµÍ³´óÄÔ£¬ÔËĞĞ 50Hz ÊµÊ±ÄæÔË¶¯Ñ§½âËã |
+| **Ö´ĞĞ»ú¹¹** | Êı×Ö¶æ»ú | RDS3230 (30kg/Ë«Öá) | 3 | 3RRS Æ½Ì¨µÄ¶¯Á¦Ô´£¬Ìá¹©¸ß¸Õ¶È¶¯Ì¬Êä³ö |
+| **Çı¶¯Ä£¿é** | ¶æ»úÇı¶¯°å | PCA9685 (16Â·/I2C½Ó¿Ú) | 1 | Ó²¼ş¼¶ PWM À©Õ¹£¬±£ÕÏ¿ØÖÆĞÅºÅµÄÊµÊ±ÎÈ¶¨ĞÔ |
+| **ÊÓ¾õ¸ĞÖª** | ¸ßÇåÉãÏñÍ· | IMX219 (120¡ã¹ã½Ç/CSI) | 1 | ÊµÊ±²¶»ñ¹âÔ´ÖÊĞÄ£¬ÊµÏÖÖ÷¶¯ÊÓ¾õ±Õ»·×·×Ù |
+| **¹©µçÏµÍ³** | DC µçÔ´ÊÊÅäÆ÷ | 6V 8A (¹¤Òµ¼¶ÎÈÑ¹) | 1 | Îª¶æ»úÈºÌá¹©ÎÈ½¡µçÁ÷£¬Ïû³ı¸ßÆµ¶¯×÷ÏÂµÄµçÑ¹µøÂä |
+| **×ª¶¯¸±** | YĞÍ/IĞÍ½ÓÍ·È«Ì× | SC±ê×¼¼ş (M6/¹Ì¶¨Ğı×ª) | 3Ì× | ×÷Îª 3RRS »ú¹¹µÄÖĞ¼ä×ª¶¯¹Ø½Ú£¬È·±£¾«È·µÄµ¥×ÔÓÉ¶ÈĞı×ª |
+| **S¹Ø½ÚÌæ´ú** | ÓãÑÛ¹Ø½Ú | XUDZ SA6T/K (M6¡Á1.02Ë¿) | 3 | ×÷Îª 3RRS »ú¹¹µÄÖĞ¼ä×ª¶¯¹Ø½Ú£¬È·±£¾«È·µÄµ¥×ÔÓÉ¶ÈĞı×ª |
+| **½ô¹ÌÓ²¼ş** | ²»Ğâ¸ÖÂİË¿/ÂİÄ¸ | M2, M3, M6 (¶àÖÖ¹æ¸ñ) | Èô¸É | È«ÏµÍ³¸ßÇ¿¶È»úĞµ×é×°£¬È·±£³Ö¾Ã½á¹¹ÎÈ¶¨ĞÔ |
+| **½Ó¿ÚÏß²Ä** | DC×ª½Ó/FPCÏß | 5.5mm Ä¸Í· / 300mm ÅÅÏß | ¸÷ 1 | ½â¾öµçÔ´ÒıÈëÓëÊ÷İ®ÅÉ 5 µÄ³¤¾àÀëÊÓ¾õ´«Êä |
 
 ---
-### Product Images | å•†å“å›¾
+### Product Images | ÉÌÆ·Í¼
 
-#### Actuation | æ‰§è¡Œæœºæ„
+#### Actuation | Ö´ĞĞ»ú¹¹
 
-![Digital Servo](../image/components/digital_servo_rds3230.png)
+![Digital Servo](../datasheets/component/digital_servo_rds3230.png)
 
 - `RDS3230 30kg` dual-axis digital servo, used as the three primary actuators of the 3RRS platform.
 
-#### Driver | é©±åŠ¨æ¨¡å—
+#### Driver | Çı¶¯Ä£¿é
 
-![PCA9685 PWM Driver Board](../image/components/pca9685_pwm_driver_board.png)
+![PCA9685 PWM Driver Board](../datasheets/component/pca9685_pwm_driver_board.png)
 
 - `PCA9685A` 16-channel `PWM` servo driver board, connected to the main controller via `I2C` to provide stable multi-channel servo control signals.
 
-#### Vision | è§†è§‰æ„ŸçŸ¥
+#### Vision | ÊÓ¾õ¸ĞÖª
 
-![IMX219 Camera Module](../image/components/imx219_pi5_camera.png)
+![IMX219 Camera Module](../datasheets/component/imx219_pi5_camera.png)
 
 - `IMX219` Raspberry Pi `Pi 5` camera module with `CSI/MIPI` interface and `120-degree` wide-angle lens, used for light-source target tracking.
 
-#### Power Supply | ä¾›ç”µç³»ç»Ÿ
+#### Power Supply | ¹©µçÏµÍ³
 
-![6V 8A Power Adapter](../image/components/power_adapter_6v8a.png)
+![6V 8A Power Adapter](../datasheets/component/power_adapter_6v8a.png)
 
 - `6V 8A` DC power adapter, used as the main servo-side power supply to maintain voltage stability during simultaneous multi-servo motion.
 
-#### Rotary Joint | è½¬åŠ¨å‰¯
+#### Rotary Joint | ×ª¶¯¸±
 
-![Rotary Joint Set](../image/components/rotary_joint_y_sc_set.png)
+![Rotary Joint Set](../datasheets/component/rotary_joint_y_sc_set.png)
 
 - `Y-type joint` and `SC standard connector` set (`M6x1`), used as the intermediate rotary joint assembly of the 3RRS mechanism.
 
-#### S-Joint Alternative | Så…³èŠ‚æ›¿ä»£
+#### S-Joint Alternative | S¹Ø½ÚÌæ´ú
 
-![Rod End Ball Joint](../image/components/rod_end_ball_joint_sa6tk.png)
+![Rod End Ball Joint](../datasheets/component/rod_end_ball_joint_sa6tk.png)
 
 - `XUDZ SA6T/K` rod end ball joint, used as an alternative intermediate joint solution to maintain accurate single-DOF rotation.
 
-#### Fasteners | ç´§å›ºç¡¬ä»¶
+#### Fasteners | ½ô¹ÌÓ²¼ş
 
-![M2 Fasteners](../image/components/m2x20_pan_screw.png)
+![M2 Fasteners](../datasheets/component/m2x20_pan_screw.png)
 
 - `M2x20` cross-head pan screw, used for small attachments and local structural fastening.
 
-![M3 Nuts](../image/components/m3_hex_nut.png)
+![M3 Nuts](../datasheets/component/m3_hex_nut.png)
 
 - `M3` stainless steel hex nut, used for servo brackets, connection plates, and thin-plate structural locking.
 
-![M3 Threaded Rod](../image/components/m3x30_threaded_rod.png)
+![M3 Threaded Rod](../datasheets/component/m3x30_threaded_rod.png)
 
 - `M3x30` fastener, used for light-load connections, link-end installation, and local leveling adjustment.
 
-![M3 Flat Head Screw](../image/components/m3x25_flat_head_screw.png)
+![M3 Flat Head Screw](../datasheets/component/m3x25_flat_head_screw.png)
 
 - `M3x25` flat-head / countersunk screw, used where a flush mounting surface is required.
 
-![M6 Threaded Rod](../image/components/m6x30_threaded_rod.png)
+![M6 Threaded Rod](../datasheets/component/m6x30_threaded_rod.png)
 
 - `M6x30` stainless steel fully threaded rod, suitable for load-bearing connections and larger-structure adjustment.
 
-![M6 Double-End Rod](../image/components/m6x35_double_end_rod.png)
+![M6 Double-End Rod](../datasheets/component/m6x35_double_end_rod.png)
 
 - `M6x35` double-end threaded rod / extended stud, used for connector joining and installation-length fine adjustment.
 
-#### Connectivity | æ¥å£çº¿æ
+#### Connectivity | ½Ó¿ÚÏß²Ä
 
-![FPC Cable](../image/components/fpc_cable_pi5.png)
+![FPC Cable](../datasheets/component/fpc_cable_pi5.png)
 
 - Raspberry Pi `Pi 5` `CSI/DSI FPC` flex cable, used for high-speed signal connection between the camera and the main controller.
 
-![DC Adapter Plug](../image/components/dc_power_adapter_plug_5_5x2_5mm.png)
+![DC Adapter Plug](../datasheets/component/dc_power_adapter_plug_5_5x2_5mm.png)
 
 - `5.5x2.5mm` `DC` power adapter plug / jack, used for external power input and cable conversion.
 
 ---
 
-### Notes | å¤‡æ³¨
+### Notes | ±¸×¢
 
 - All quantities are for one complete 3RRS unit.
-- æ‰€æœ‰æ•°é‡å‡ä¸ºä¸€å¥—å®Œæ•´ 3RRS å•å…ƒæ‰€éœ€ã€‚
+- ËùÓĞÊıÁ¿¾ùÎªÒ»Ì×ÍêÕû 3RRS µ¥ÔªËùĞè¡£
 - Fastener quantities may vary based on assembly design.
-- ç´§å›ºä»¶æ•°é‡å¯èƒ½æ ¹æ®è£…é…è®¾è®¡æœ‰æ‰€å˜åŒ–ã€‚
+- ½ô¹Ì¼şÊıÁ¿¿ÉÄÜ¸ù¾İ×°ÅäÉè¼ÆÓĞËù±ä»¯¡£
+
 
