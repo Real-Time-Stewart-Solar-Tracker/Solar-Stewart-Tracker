@@ -1,10 +1,44 @@
 ﻿# Bill of Materials (BOM) | 物料清单
 
-> Product image appendix for the mechanical model branch.
-> 机械模型分支的商品图附录。
+[English](#english) | [中文](#中文)
 
 ---
 
+## English
+
+### 3RRS Solar Stewart Tracker - Component List
+
+| Category | Component | Specifications | Qty | Key Function |
+|----------|-----------|----------------|-----|--------------|
+| **Computation** | Raspberry Pi 5 | 4GB RAM Version | 1 | Core brain running 50Hz real-time IK solver |
+| **Actuation** | Digital Servo | RDS3230 (30kg/Dual-axis) | 3 | High-torque actuators for 3RRS parallel platform |
+| **Driver** | PWM Driver Board | PCA9685 (16-Channel I2C) | 1 | Hardware PWM expansion to ensure real-time control |
+| **Vision** | Camera Module | IMX219 (120° FOV/CSI) | 1 | Centroid extraction for active vision closed-loop |
+| **Power Supply** | DC Power Adapter | 6V 8A (Industrial Grade) | 1 | Prevents voltage sags during simultaneous high-torque movements |
+| **Rotary Joint** | Y-Clevis / I-Joint | SC Standard (M6/Rotary) | 3 sets | Intermediate revolute joint for 3RRS, ensuring precise single-DOF rotation |
+| **S-Joint Alt.** | Rod End Ball Joint (Fish-eye) | XUDZ SA6T/K (M6×1.02 thread) | 3 | Intermediate revolute joint for 3RRS, ensuring precise single-DOF rotation |
+| **Fasteners** | SS Bolts & Nuts | M2, M3, M6 Assorted | N/A | High-strength assembly for overall structural reliability |
+| **Connectivity** | DC Jack & FPC Cable | 5.5mm Jack / 300mm FPC | 1 ea. | Reliable power input and high-speed data link for Pi 5 |
+
+---
+
+## 中文
+
+### 3RRS 太阳能 Stewart 追踪器 - 组件清单
+
+| 类别 | 组件名称 | 规格/型号 | 数量 | 关键用途 |
+|------|----------|-----------|------|----------|
+| **计算单元** | 树莓派 5 | 4GB RAM 版本 | 1 | 系统大脑，运行 50Hz 实时逆运动学解算 |
+| **执行机构** | 数字舵机 | RDS3230 (30kg/双轴) | 3 | 3RRS 平台的动力源，提供高刚度动态输出 |
+| **驱动模块** | 舵机驱动板 | PCA9685 (16路/I2C接口) | 1 | 硬件级 PWM 扩展，保障控制信号的实时稳定性 |
+| **视觉感知** | 高清摄像头 | IMX219 (120°广角/CSI) | 1 | 实时捕获光源质心，实现主动视觉闭环追踪 |
+| **供电系统** | DC 电源适配器 | 6V 8A (工业级稳压) | 1 | 为舵机群提供稳健电流，消除高频动作下的电压跌落 |
+| **转动副** | Y型/I型接头全套 | SC标准件 (M6/固定旋转) | 3套 | 作为 3RRS 机构的中间转动关节，确保精确的单自由度旋转 |
+| **S关节替代** | 鱼眼关节 | XUDZ SA6T/K (M6×1.02丝) | 3 | 作为 3RRS 机构的中间转动关节，确保精确的单自由度旋转 |
+| **紧固硬件** | 不锈钢螺丝/螺母 | M2, M3, M6 (多种规格) | 若干 | 全系统高强度机械组装，确保持久结构稳定性 |
+| **接口线材** | DC转接/FPC线 | 5.5mm 母头 / 300mm 排线 | 各 1 | 解决电源引入与树莓派 5 的长距离视觉传输 |
+
+---
 ### Product Images | 商品图
 
 #### Actuation | 执行机构
@@ -30,12 +64,12 @@
 ![6V 8A Power Adapter](../media/image/power_adapter_6v8a.png)
 
 - `6V 8A` DC power adapter, used as the main servo-side power supply to maintain voltage stability during simultaneous multi-servo motion.
+
 #### Rotary Joint | 转动副
 
 ![Rotary Joint Set](../media/image/rotary_joint_y_sc_set.png)
 
 - `Y-type joint` and `SC standard connector` set (`M6x1`), used as the intermediate rotary joint assembly of the 3RRS mechanism.
-
 
 #### S-Joint Alternative | S关节替代
 
@@ -87,5 +121,4 @@
 - 所有数量均为一套完整 3RRS 单元所需。
 - Fastener quantities may vary based on assembly design.
 - 紧固件数量可能根据装配设计有所变化。
-
 
