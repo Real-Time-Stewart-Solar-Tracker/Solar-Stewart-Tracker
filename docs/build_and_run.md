@@ -1,19 +1,19 @@
 # Build and Run
 
-Target platform: Raspberry Pi OS (Linux)  
+Target platform: Raspberry Pi OS (Linux)
 Development platforms: Linux / Windows (CMake + C++17)
 
 ---
 
 ## Repository structure
 
-- `include/` — public headers
-- `src/` — implementation
-- `src/app/` — bootstrap modules (config + factory + event-loop)
-- `src/qt/` — Qt UI application
-- `docs/` — assessment documentation
-- `diagrams/` — PNG + Mermaid diagrams
-- `tests/` — unit tests
+- `include/` - public headers
+- `src/` - implementation
+- `src/app/` - bootstrap modules (config + factory + event-loop)
+- `src/qt/` - Qt UI application
+- `docs/` - assessment documentation
+- `diagrams/` - PNG + Mermaid diagrams
+- `tests/` - unit tests
 
 ---
 
@@ -40,7 +40,7 @@ sudo apt install -y libcamera-dev
 Optional (Qt UI build on Linux):
 
 ```bash
-sudo apt install -y qt6-base-dev qt6-charts-dev
+sudo apt install -y qtbase5-dev qtcharts5-dev qt5-qmake
 ```
 
 Optional (legacy OpenCV viewer target):
@@ -70,7 +70,9 @@ Install:
 
 Verify:
 
+```bash
 cmake --version
+```
 
 ---
 
@@ -89,8 +91,7 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 ```
 
 Common options:
-- `-DSOLAR_BUILD_QT_APP=ON/OFF` (default: ON if Qt6 found)
-- `-DSOLAR_HAVE_OPENCV=ON/OFF` (legacy OpenCV viewer target)
+- `-DSOLAR_TRY_OPENCV=ON/OFF` (default: ON, enables the OpenCV viewer when OpenCV is found)
 
 ---
 
@@ -135,7 +136,7 @@ Qt app:
 ## Notes on optional features
 
 - **libcamera (Pi only):** enabled automatically when `libcamera-dev` is present.
-- **Qt UI:** built when Qt6 is detected (or `SOLAR_BUILD_QT_APP=ON`).
+- **Qt UI:** built automatically when Qt5 Widgets is detected.
 - **UiViewer (OpenCV):** a legacy diagnostic viewer target; it is not used by the Qt application.
 
 ---
