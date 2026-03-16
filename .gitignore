@@ -1,0 +1,21 @@
+# SolidWorks temporary files
+~$*.SLDPRT
+~$*.SLDASM
+~$*.SLDDRW
+
+# SolidWorks backup files
+*.SLDPRT.bak
+*.SLDASM.bak
+*.SLDDRW.bak
+
+# SolidWorks lock files
+*.SLDPRT.lock
+*.SLDASM.lock
+*.SLDDRW.lock
+
+# Windows system files
+Thumbs.db
+Desktop.ini
+
+# macOS system files
+.DS_Store
