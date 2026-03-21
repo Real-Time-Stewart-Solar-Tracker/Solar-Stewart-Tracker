@@ -24,39 +24,46 @@ ActuatorManager::Config ActuatorManager::config() const {
 }
 
 void ActuatorManager::onCommand(const ActuatorCommand& cmd) {
-    // Protect internal state (lastOut_/hasLast_)
-    std::lock_guard<std::mutex> lk(mtx_);
-
     ActuatorCommand safe = cmd;
 
-    for (std::size_t idx = 0; idx < 3; ++idx) {
-        float desired = cmd.actuator_targets[idx];
+    // Phase 1: compute/update internal state under the state lock only.
+    {
+        std::lock_guard<std::mutex> lk(mtx_);
 
-        desired = std::clamp(desired, cfg_.min_out[idx], cfg_.max_out[idx]);
+        for (std::size_t idx = 0; idx < 3; ++idx) {
+            float desired = cmd.actuator_targets[idx];
 
-        float out = desired;
-        if (hasLast_) {
-            const float prev  = lastOut_[idx];
-            const float delta = desired - prev;
-            const float step  = cfg_.max_step[idx];
+            desired = std::clamp(desired, cfg_.min_out[idx], cfg_.max_out[idx]);
 
-            if (std::fabs(delta) > step) {
-                out = prev + (delta > 0.0f ? step : -step);
+            float out = desired;
+            if (hasLast_) {
+                const float prev  = lastOut_[idx];
+                const float delta = desired - prev;
+                const float step  = cfg_.max_step[idx];
+
+                if (std::fabs(delta) > step) {
+                    out = prev + (delta > 0.0f ? step : -step);
+                }
             }
+
+            safe.actuator_targets[idx] = out;
+            lastOut_[idx] = out;
         }
 
-        safe.actuator_targets[idx] = out;
-        lastOut_[idx] = out;
+        hasLast_ = true;
     }
 
-    hasLast_ = true;
-
+    // Phase 2: copy callback under callback lock only.
     SafeCommandCallback cb;
     {
-        std::lock_guard<std::mutex> lk2(cbMtx_);
+        std::lock_guard<std::mutex> lk(cbMtx_);
         cb = safeCb_;
     }
-    if (cb) cb(safe);
+
+    // Phase 3: invoke callback with no internal locks held.
+    if (cb) {
+        cb(safe);
+    }
 }
 
 } // namespace solar
