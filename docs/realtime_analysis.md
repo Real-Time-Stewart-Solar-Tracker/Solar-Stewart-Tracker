@@ -2,186 +2,249 @@
 
 ## 1. Realtime Goal
 
-The Solar Stewart Tracker must respond to changes in sun direction with low, bounded and measurable latency.
+The Solar Stewart Tracker must respond to changes in target position with **low, bounded, and measurable software-side latency**.
 
-The system is implemented as an **event-driven, three-stage multi-threaded pipeline**:
+The current implementation is structured as an **event-driven multi-threaded pipeline**:
 
-- T1 Camera (backend-owned)
-- T2 Control (vision + control + kinematics)
-- T3 Actuator (safety + servo output)
+- **Camera path** — backend callback delivers frames
+- **Control thread** — vision + control + kinematics
+- **Actuator thread** — safety shaping + servo output
 
-Threads block while waiting for events.
-No polling loops are used.
-No sleep-based timing is used in the control path.
-Wake-ups occur only when new data arrives.
+The primary real-time requirement is **deterministic software-side latency from frame delivery to actuator command issuance**.
 
-The primary realtime requirement is deterministic end-to-end latency from frame capture to actuator command.
+The current architecture is designed so that:
 
----
+- camera data arrives through callbacks from the backend
+- worker threads block while waiting for new work
+- bounded queues prevent backlog accumulation
+- control decisions are based on the newest available data
 
-## 2. Event-Driven Architecture (Wake-up Mechanisms)
+This matches the course requirement for **event-driven code using callbacks and waking threads**, rather than delay-driven single-threaded loops.
 
-| Event Source              | Thread       | Wake-up Mechanism                                      |
-|---------------------------|-------------|--------------------------------------------------------|
-| Camera frame ready        | T1 Camera   | Camera backend callback                                |
-| FrameEvent available      | T2 Control  | Blocking wait on FrameQueue (condition variable)       |
-| ActuatorCommand available | T3 Actuator | Blocking wait on CommandQueue (condition variable)     |
+------------------------------------------------------------------------
 
-All worker threads block on condition variables and are woken only when new data becomes available.
+## 2. Event-Driven Architecture
 
-This ensures:
-- No CPU busy-waiting
-- Deterministic scheduling behaviour
-- Clean separation of event producers and consumers
-- No artificial timing delays
+The runtime data path is event-driven.
 
----
+### Thread roles
+
+- **Camera/backend path** acquires frames and emits `FrameEvent` through a registered callback
+- **Control thread** blocks on the frame queue and performs:
+  - vision
+  - control
+  - kinematics
+- **Actuator thread** blocks on the command queue and performs:
+  - safety shaping
+  - final actuator output
+
+### Wake-up mechanisms
+
+| Event Source | Execution Context | Wake-up Mechanism |
+|---|---|---|
+| Camera frame ready | camera/backend path | camera backend callback |
+| `FrameEvent` available | control thread | blocking wait on `FrameQueue` |
+| `ActuatorCommand` available | actuator thread | blocking wait on `CommandQueue` |
+
+Important accuracy notes:
+
+- the processing pipeline avoids **busy-wait polling**
+- worker threads are woken by **callbacks** or **blocking queue waits**
+- the Linux application layer may use blocking event-wait mechanisms such as `poll()`, which is consistent with blocking I/O used to wake execution paths
+
+This gives the system the following real-time properties:
+
+- no CPU busy-waiting in the core processing path
+- no sleep-based timing driving the control loop
+- clean separation between event producers and consumers
+- bounded queue-based flow between stages
+
+------------------------------------------------------------------------
 
 ## 3. Queue Design and Realtime Justification
 
-Two bounded queues separate execution domains:
+Two bounded queues separate the execution domains.
 
-### FrameQueue (capacity = 1)
+### Frame queue (capacity = 1)
 
-- Keeps only the newest frame
-- Drops oldest frame if full
-- Prevents frame backlog
-- Guarantees control operates on freshest data
+- keeps only the newest frame
+- drops the oldest frame if full
+- prevents frame backlog
+- ensures control uses the freshest available sensor data
 
-### CommandQueue (capacity = 1)
+### Command queue (capacity = 1)
 
-- Keeps only the newest command
-- Prevents actuator lag
-- Ensures latest control output is applied
+- keeps only the newest command
+- prevents actuator lag caused by queued stale commands
+- ensures the actuator path applies the newest available control output
 
-This bounding guarantees:
+This queue design gives the following real-time benefits:
 
-- No unbounded memory growth
-- Upper bound on pipeline latency
-- No cumulative delay across frames
+- no unbounded memory growth
+- no cumulative frame backlog
+- bounded pipeline latency by design
+- freshness is prioritised over historical completeness
 
-This design decision was made based on realtime control principles.
+This is a deliberate real-time design decision: for a tracker/control pipeline, **the newest frame is more valuable than preserving all older frames**.
 
----
+------------------------------------------------------------------------
 
 ## 4. Latency Measurement Design
 
 Latency instrumentation is implemented in `LatencyMonitor`.
 
-The following timestamps are recorded:
+The following timestamps are recorded for each frame:
 
-| Stage                     | Timestamp     |
-|---------------------------|--------------|
-| Frame received            | `t_capture`  |
-| Sun estimate computed     | `t_estimate` |
-| Control computed          | `t_control`  |
-| Actuation issued          | `t_actuate`  |
+| Stage | Timestamp |
+|---|---|
+| Frame received | `t_capture` |
+| Sun estimate computed | `t_estimate` |
+| Control computed | `t_control` |
+| Actuation issued | `t_actuate` |
 
-End-to-end latency is defined as:
+### End-to-end latency
 
-End-to-end latency = t_actuate − t_capture
+**End-to-end latency = `t_actuate - t_capture`**
 
-Intermediate latencies:
+### Intermediate latencies
 
-- Vision latency = `t_estimate − t_capture`
-- Control latency = `t_control − t_estimate`
-- Actuation latency = `t_actuate − t_control`
+- **Vision latency** = `t_estimate - t_capture`
+- **Control latency** = `t_control - t_estimate`
+- **Actuation latency** = `t_actuate - t_control`
 
-This enables identification of computational bottlenecks.
+This allows the implementation to identify which stage dominates latency and whether the chosen architecture is justified quantitatively.
 
----
-## 5. Measured Results (Raspberry Pi – Hardware Execution)
+------------------------------------------------------------------------
 
-Measurement run: 695 frames  
-Platform: Raspberry Pi OS (Bookworm)  
-Camera: libcamera YUV420 pipeline  
+## 5. Measured Results
 
-| Stage    | Avg (ms) | Min (ms) | Max (ms) | Jitter (ms) |
-|----------|----------|----------|----------|-------------|
-| Total    | 0.800    | 0.636    | 3.806    | 3.171       |
-| Vision   | 0.795    | 0.631    | 3.803    | —           |
-| Control  | 0.0040   | 0.0012   | 1.252    | —           |
-| Actuate  | 0.0010   | 0.0006   | 0.0052   | —           |
+Example measured run:
 
----
+- **Frames:** 490
+- **Platform:** Raspberry Pi class Linux hardware
+- **Camera path:** libcamera-backed execution
+- **Measurement scope:** software-side pipeline timing
+
+| Stage | Avg (ms) | Min (ms) | Max (ms) | Jitter (ms) |
+|---|---:|---:|---:|---:|
+| Total | 1.106 | 0.695 | 4.441 | 3.746 |
+| Vision | 1.035 | 0.673 | 3.748 | — |
+| Control | 0.0036 | 0.0014 | 0.073 | — |
+| Actuate | 0.067 | 0.012 | 1.970 | — |
+
+These results show that the measured software-side end-to-end latency remains well below a typical **30 Hz** frame period of approximately **33 ms**.
+
+------------------------------------------------------------------------
 
 ## 6. Quantitative Evaluation
 
-### 6.1 Dominant Latency Source
+### 6.1 Dominant latency source
 
-Vision processing accounts for ~99% of end-to-end latency.
+Vision processing accounts for most of the measured end-to-end latency.
 
-Control and actuation computation are negligible (<0.01 ms average).
+Average values show:
+
+- **Vision** dominates the pipeline
+- **Control** is computationally very small
+- **Actuation command issuance** is also small relative to total latency
 
 Engineering conclusion:
 
-- Vision is the only performance-critical subsystem.
-- Control and kinematics are computationally insignificant.
-- Architectural separation is validated by measurement.
+- vision is the main performance-critical stage
+- control is not a meaningful bottleneck in the measured run
+- the architectural separation is justified by measurement
 
----
+### 6.2 Jitter analysis
 
-### 6.2 Jitter Analysis
+Worst-case total latency: **4.441 ms**  
+Minimum latency: **0.695 ms**  
+Jitter: approximately **3.746 ms**
 
-Worst-case total latency: 3.806 ms  
-Minimum latency: 0.636 ms  
-Jitter ≈ 3.17 ms  
+At **30 Hz**:
 
-At 30 Hz:
-Frame period ≈ 33 ms  
+- frame period ≈ **33 ms**
 
-Observed latency is:
+Observed total latency is therefore:
 
-- Well below one frame period
-- Highly stable
-- Bounded and deterministic
+- well below one frame period
+- bounded in practice under the measured conditions
+- low enough to avoid normal pipeline accumulation in the measured run
 
 Engineering interpretation:
 
-- Linux scheduling overhead is minimal.
-- Bounded queues prevent accumulation.
-- Architecture comfortably supports higher frame rates.
+- queue bounding is effective
+- backlog is prevented by the freshest-data policy
+- the architecture provides stable response under the measured workload
 
----
+------------------------------------------------------------------------
 
 ## 7. Realtime Compliance Verification
 
-The system satisfies:
+The current implementation satisfies the following real-time design requirements:
 
-- No polling loops
-- No sleep-based timing in control path
-- Condition-variable blocking semantics
-- Event-driven camera callbacks
-- Bounded queues
-- Quantitative latency instrumentation
-- Measured worst-case bounds
+- event-driven frame arrival through callbacks
+- blocking worker-thread wake-up on queues
+- no busy-wait polling in the core processing path
+- no sleep-based timing used to drive the control pipeline
+- bounded queues between acquisition, control, and actuation
+- quantitative latency instrumentation
+- measured software-side worst-case end-to-end latency
 
-Measured performance confirms deterministic, bounded behaviour suitable for closed-loop control.
+This is consistent with the course expectation that real-time processing should be achieved using **callbacks, waking threads, timers, signals, and blocking I/O**, rather than using wait statements to establish timing.
 
----
+------------------------------------------------------------------------
 
 ## 8. Engineering Decisions Supported by Data
 
-Based on empirical results:
+The measured data supports the following design decisions:
 
-1. No optimisation required in control or kinematics.
-2. Vision layer is the only optimisation candidate.
-3. Bounded queue capacity = 1 is justified.
-4. Freshest-data policy prevents latency accumulation.
-5. Architecture can scale without redesign.
+1. **No optimisation is currently required in the control stage**  
+   Its contribution to total latency is negligible in the measured run.
 
-All conclusions are derived from measured data.
+2. **Vision is the main optimisation candidate**  
+   Most measured end-to-end latency originates there.
 
----
+3. **Queue capacity = 1 is justified**  
+   Measured latency is already low, and freshness is more important than preserving old frames.
 
-## 9. Conclusion
+4. **Freshest-data policy prevents latency accumulation**  
+   Old frames and commands do not build up into backlog.
 
-The Solar Stewart Tracker:
+5. **Separated execution stages are justified**  
+   Acquisition, computation, and output remain isolated and measurable.
 
-- Demonstrates bounded and measurable realtime performance.
-- Achieves < 4 ms worst-case end-to-end latency.
-- Maintains low jitter under Linux scheduling.
-- Uses a production-level event-driven architecture.
-- Separates acquisition, computation and actuation cleanly.
+These are not generic claims; they follow directly from the measured latency breakdown.
 
-The system satisfies embedded realtime responsiveness requirements.
+------------------------------------------------------------------------
+
+## 9. Scope and Limitations
+
+This document supports claims about:
+
+- software-side timing behaviour
+- event-driven architecture
+- bounded queue behaviour
+- relative computational cost of major pipeline stages
+
+This document does **not** by itself prove:
+
+- hard real-time guarantees
+- full physical actuator movement latency
+- complete end-to-end electromechanical response of the real platform under all conditions
+- behaviour under every possible hardware failure mode
+
+The reported numbers are therefore **software-side empirical measurements**, not formal hard real-time guarantees.
+
+------------------------------------------------------------------------
+
+## 10. Conclusion
+
+The Solar Stewart Tracker demonstrates:
+
+- bounded and measurable software-side real-time behaviour
+- event-driven processing based on callbacks and waking threads
+- end-to-end software-side latency below **5 ms** in the reported measured run
+- low computational cost outside the vision stage
+- a clear separation between acquisition, computation, and output
+
+The measured results justify the current queue-based, multi-threaded design and show that the implementation satisfies the project’s real-time responsiveness goals under the tested conditions.
