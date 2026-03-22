@@ -3,26 +3,22 @@ set -euo pipefail
 
 # Collect reproducible latency evidence on Raspberry Pi / Linux.
 #
-# This script captures performance telemetry during system execution,
-# including per-frame latency measurements, platform details, and git state.
-#
 # Produces:
-# - raw latency CSV (frame-by-frame measurements)
-# - full runtime log (stdout/stderr capture)
-# - platform.txt (hardware and OS information)
-# - git_commit.txt (repository state snapshot)
-# - command.txt (exact invocation record)
-# - README.txt (artefact documentation)
+# - raw latency CSV
+# - full runtime log
+# - platform description
+# - git commit hash
+# - exact command used
+# - brief README for the artefact folder
 #
 # Requirements:
-# - built solar_tracker executable (Release build recommended)
-# - timeout command (GNU coreutils)
-# - git available (for commit hash capture)
-# - POSIX-compliant shell (bash)
+# - built solar_tracker executable
+# - timeout command
+# - git available if commit hash is desired
 #
 # Usage:
 #   bash scripts/collect_latency_pi.sh
-#   bash scripts/collect_latency_pi.sh --duration 60
+#   bash scripts/collect_latency_pi.sh --duration 30
 #   bash scripts/collect_latency_pi.sh --build-dir build --out-dir artifacts/latency_run_01
 
 BUILD_DIR="build"
