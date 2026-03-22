@@ -1,4 +1,11 @@
 #include "app/AppConfig.hpp"
+#include <array>
+
+namespace {
+constexpr std::array<float, 3> kRigServoParkDeg = {41.f, 41.f, 41.f};
+// Measured park angles for the current physical rig after servo-horn alignment.
+// These are hardware calibration values, not the kinematic neutral angles.
+}
 
 namespace solar::app {
 
@@ -49,7 +56,13 @@ AppConfig defaultConfig() {
     // -----------------------------
     // Servo driver mapping
     // -----------------------------
-    cfg.servo.log_every_n = 1;
+    cfg.servo.log_every_n = 10;
+
+#if SOLAR_HAVE_LIBCAMERA
+    cfg.servo.startup_policy = solar::ServoDriver::StartupPolicy::RequireHardware;
+#else
+    cfg.servo.startup_policy = solar::ServoDriver::StartupPolicy::LogOnly;
+#endif
 
     cfg.servo.ch[0].channel = 2; // front
     cfg.servo.ch[1].channel = 0; // left
@@ -63,9 +76,10 @@ AppConfig defaultConfig() {
     cfg.servo.ch[1].min_deg = 0.f;  cfg.servo.ch[1].max_deg = 180.f;
     cfg.servo.ch[2].min_deg = 0.f;  cfg.servo.ch[2].max_deg = 180.f;
 
-    cfg.servo.ch[0].neutral_deg = 41.f;
-    cfg.servo.ch[1].neutral_deg = 41.f;
-    cfg.servo.ch[2].neutral_deg = 41.f;
+    // Calibrated neutral / park angle validated on the current rig.
+    cfg.servo.ch[0].neutral_deg = kRigServoParkDeg[0];
+    cfg.servo.ch[1].neutral_deg = kRigServoParkDeg[1];
+    cfg.servo.ch[2].neutral_deg = kRigServoParkDeg[2];
 
     cfg.servo.ch[0].invert = false;
     cfg.servo.ch[1].invert = false;

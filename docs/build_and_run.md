@@ -1,114 +1,93 @@
 # Build and Run
 
-Target platform: Raspberry Pi OS (Linux)  
-Development platforms: Linux / Windows (CMake + C++17)
+Target platform: **Raspberry Pi OS (Linux)**  
+Development platforms: **Linux / Windows** (CMake + C++17)
+
+This project is designed to be reproducible:
+
+- one CMake build for all targets
+- optional features are auto-detected where available
+- automated tests integrate with **CTest**
+
+------------------------------------------------------------------------
+
+## 1) Repository structure
+
+- `include/` --- public headers
+- `src/` --- implementation
+- `src/app/` --- bootstrap modules (configuration, factory, event loop)
+- `src/qt/` --- optional Qt UI application
+- `src/ui/` --- optional OpenCV viewer support compiled into the CLI build when OpenCV is found
+- `docs/` --- assessment documentation
+- `diagrams/` --- PNG and Mermaid diagrams
+- `tests/` --- automated tests plus one manual hardware executable
+
+------------------------------------------------------------------------
+
+## 2) Dependencies (quick overview)
+
+**Always required**
+- CMake ≥ 3.16
+- a C++17 compiler (GCC / Clang / MSVC)
+- Make or Ninja on Linux, or Visual Studio build tools on Windows
+
+**Optional**
+- **Qt5** --- builds the optional Qt GUI target when found
+- **OpenCV** --- enables viewer support in the CLI application when found
+- **libcamera** --- enables the Raspberry Pi camera backend on Linux when found
+
+For full details see: `docs/DEPENDENCIES.md`
+
+------------------------------------------------------------------------
+
+## 3) Clone
+
+```bash
+git clone https://github.com/Real-Time-Stewart-Solar-Tracker/Solar-Stewart-Tracker.git
+cd Solar-Stewart-Tracker
+````
 
 ---
 
-## Repository structure
+## 4) Raspberry Pi OS / Linux build
 
-- `include/` — public headers
-- `src/` — implementation
-- `src/app/` — bootstrap modules (config + factory + event-loop)
-- `src/qt/` — Qt UI application
-- `docs/` — assessment documentation
-- `diagrams/` — PNG + Mermaid diagrams
-- `tests/` — unit tests
-
----
-
-## Prerequisites
-
-### 2.1 Raspberry Pi (Target Platform)
-
-OS:
-- Raspberry Pi OS (Debian-based)
-
-Install required tools:
+### Install required tools
 
 ```bash
 sudo apt update
 sudo apt install -y build-essential cmake git pkg-config
 ```
 
-Optional (Raspberry Pi camera via libcamera):
+### Optional: libcamera
 
 ```bash
 sudo apt install -y libcamera-dev
 ```
 
-Optional (Qt UI build on Linux):
+### Optional: Qt5 GUI
 
 ```bash
-sudo apt install -y qt6-base-dev qt6-charts-dev
+sudo apt install -y qtbase5-dev qtcharts5-dev qt5-qmake
 ```
 
-Optional (legacy OpenCV viewer target):
+### Optional: OpenCV
 
 ```bash
 sudo apt install -y libopencv-dev
 ```
 
-Verify CMake version:
-
-```bash
-cmake --version
-```
-
-Minimum required:
-CMake >= 3.16
-
 ---
 
-### 2.2 Windows (Development Only)
-
-Install:
-
-- Visual Studio 2019 or 2022
-- "Desktop development with C++" workload
-- CMake (bundled or standalone)
-
-Verify:
-
-cmake --version
-
----
-
-## Clone
-
-```bash
-git clone <https://github.com/Real-Time-Stewart-Solar-Tracker/Solar-Stewart-Tracker>
-```
-
----
-
-## Configure
+## 5) Configure and build (Linux / Raspberry Pi)
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j$(nproc)
 ```
 
-Common options:
-- `-DSOLAR_BUILD_QT_APP=ON/OFF` (default: ON if Qt6 found)
-- `-DSOLAR_HAVE_OPENCV=ON/OFF` (legacy OpenCV viewer target)
+After building, executables are placed in the `build/` directory.
 
----
-
-## Build
-
-```bash
-cmake --build build -j
-```
-
-Outputs (typical):
-- `solar_tracker_core` (core library)
-- `solar_tracker` (CLI / headless app)
-- `solar_tracker_qt` (Qt UI app, if enabled)
-- unit tests: `test_core`, `test_pca9685`, `test_servodriver`
-
----
-
-## Run unit tests
+Run automated tests:
 
 ```bash
 ctest --test-dir build --output-on-failure
@@ -116,45 +95,49 @@ ctest --test-dir build --output-on-failure
 
 ---
 
-## Run
+## 6) Run executables
 
-CLI app:
+Core CLI application:
 
 ```bash
 ./build/solar_tracker
 ```
 
-Qt app:
+Qt GUI application (MAIN FULL APP)
+(only if Qt5 was found during configuration):
 
 ```bash
 ./build/solar_tracker_qt
 ```
 
----
-
-## Notes on optional features
-
-- **libcamera (Pi only):** enabled automatically when `libcamera-dev` is present.
-- **Qt UI:** built when Qt6 is detected (or `SOLAR_BUILD_QT_APP=ON`).
-- **UiViewer (OpenCV):** a legacy diagnostic viewer target; it is not used by the Qt application.
-
----
-
-## Doxygen
+Manual hardware executable
+(not part of `ctest`):
 
 ```bash
-doxygen Doxyfile
+./build/tests/servo_manual_smoketest
 ```
 
-Output:
-- `docs/doxygen/html/index.html`
-
 ---
 
-## Clean build
+## 7) Windows build
 
-```bash
-rm -rf build
+Configure:
+
+```powershell
 cmake -S . -B build
-cmake --build build -j
 ```
+
+Build:
+
+```powershell
+cmake --build build --config Release
+```
+
+Run tests:
+
+```powershell
+ctest --test-dir build -C Release --output-on-failure
+```
+
+
+# Updated configuration notes
