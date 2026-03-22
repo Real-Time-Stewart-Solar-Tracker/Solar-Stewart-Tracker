@@ -9,13 +9,20 @@
 namespace solar {
 
 /**
- * @brief Converts SunEstimate into a platform tilt/pan setpoint.
+ * @brief Converts SunEstimate into a bounded platform tilt/pan setpoint.
  *
- * Implements event-driven control logic:
- * - Computes centroid error
- * - Applies proportional gains
- * - Applies deadband and output limits
+ * Implements a simple event-driven image-space proportional controller:
+ * - Computes normalized centroid error relative to image center
+ * - Rejects low-confidence estimates
+ * - Applies a normalized deadband near image center to suppress chatter
+ * - Applies proportional gains for pan and tilt
+ * - Clamps output to configured angular limits
  * - Emits PlatformSetpoint via callback
+ *
+ * Design intent:
+ * - deterministic and easy to test
+ * - low complexity and appropriate for coursework scope
+ * - avoids actuator chatter near the target by using a small deadband
  *
  * No internal threads. Callback registration is thread-safe.
  */
@@ -32,7 +39,7 @@ public:
         /// @brief Expected image height (pixels).
         int height{480};
 
-        /// @brief Deadband around image center (normalized units).
+        /// @brief Normalized deadband around image center used to suppress small corrective motions.
         float deadband{0.02f};
 
         /// @brief Proportional gain for pan axis.

@@ -1,0 +1,31 @@
+name: Pi Hardware Tests
+
+on:
+  workflow_dispatch:
+
+jobs:
+  hw-tests:
+    runs-on: [self-hosted, linux, arm64]
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build-pi -G Ninja -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Build
+        run: cmake --build build-pi -j
+
+      - name: Run hardware-labelled tests
+        env:
+          SOLAR_RUN_CAMERA_HW_TESTS: "1"
+          SOLAR_RUN_I2C_HW_TESTS: "1"
+          SOLAR_I2C_DEV: "/dev/i2c-1"
+        run: ctest --test-dir build-pi -L hw --output-on-failure
+
+      - name: Upload hardware test log
+        uses: actions/upload-artifact@v4
+        with:
+          name: pi-hardware-test-log
+          path: build-pi/Testing
