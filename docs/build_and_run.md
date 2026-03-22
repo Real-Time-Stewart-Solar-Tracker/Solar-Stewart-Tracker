@@ -140,3 +140,4 @@ ctest --test-dir build -C Release --output-on-failure
 ```
 
 
+# Updated configuration notes
