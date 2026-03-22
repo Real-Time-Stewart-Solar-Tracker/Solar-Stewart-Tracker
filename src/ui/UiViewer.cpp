@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdio>
 #include <limits>
+#include <string>
 
 namespace solar {
 namespace {
@@ -26,47 +27,12 @@ static inline std::string fmt(float v, int prec = 3) {
     std::snprintf(buf, sizeof(buf), "%.*f", prec, v);
     return std::string(buf);
 }
+
 static inline std::string fmt(double v, int prec = 3) {
     char buf[64];
     std::snprintf(buf, sizeof(buf), "%.*f", prec, v);
     return std::string(buf);
 }
-
-// Draw text with a semi-transparent background box (stable + readable)
-// static inline void drawTextBox(cv::Mat& img,
-//                                const std::string& text,
-//                                cv::Point org,           // baseline start
-//                                int fontFace,
-//                                double fontScale,
-//                                const cv::Scalar& textColor,
-//                                int thickness,
-//                                const cv::Scalar& boxColor,
-//                                double boxAlpha = 0.55) {
-//     int base = 0;
-//     const cv::Size sz = cv::getTextSize(text, fontFace, fontScale, thickness, &base);
-
-//     const int padX = 10;
-//     const int padY = 7;
-
-//     cv::Rect r(org.x - padX,
-//                org.y - sz.height - padY,
-//                sz.width + 2 * padX,
-//                sz.height + base + 2 * padY);
-
-//     // clamp inside image
-//     r.x = std::max(0, r.x);
-//     r.y = std::max(0, r.y);
-//     r.width  = std::min(r.width,  img.cols - r.x);
-//     r.height = std::min(r.height, img.rows - r.y);
-
-//     cv::Mat roi = img(r);
-//     cv::Mat overlay;
-//     roi.copyTo(overlay);
-//     cv::rectangle(overlay, cv::Rect(0, 0, r.width, r.height), boxColor, cv::FILLED);
-//     cv::addWeighted(overlay, boxAlpha, roi, 1.0 - boxAlpha, 0.0, roi);
-
-//     cv::putText(img, text, org, fontFace, fontScale, textColor, thickness, cv::LINE_AA);
-// }
 
 static inline void drawTextBox(cv::Mat& img,
                                const std::string& text,
@@ -90,13 +56,10 @@ static inline void drawTextBox(cv::Mat& img,
                sz.width + 2 * padX,
                sz.height + base + 2 * padY);
 
-    // robust clamp: intersect with image bounds
     const cv::Rect imgRect(0, 0, img.cols, img.rows);
     r = r & imgRect;
 
-    // if fully outside (or got clamped to 0 area), skip safely
     if (r.width <= 0 || r.height <= 0) {
-        // still try drawing text only if the origin is inside (optional)
         if (org.x >= 0 && org.x < img.cols && org.y >= 0 && org.y < img.rows) {
             cv::putText(img, text, org, fontFace, fontScale, textColor, thickness, cv::LINE_AA);
         }
@@ -110,6 +73,23 @@ static inline void drawTextBox(cv::Mat& img,
     cv::addWeighted(overlay, boxAlpha, roi, 1.0 - boxAlpha, 0.0, roi);
 
     cv::putText(img, text, org, fontFace, fontScale, textColor, thickness, cv::LINE_AA);
+}
+
+static bool frameReadableByUi(const FrameEvent& fe) {
+    if (fe.width <= 0 || fe.height <= 0 || fe.stride_bytes <= 0) {
+        return false;
+    }
+
+    const std::size_t bpp = bytesPerPixel(fe.format);
+    const std::size_t minStride = static_cast<std::size_t>(fe.width) * bpp;
+    if (static_cast<std::size_t>(fe.stride_bytes) < minStride) {
+        return false;
+    }
+
+    const std::size_t required =
+        static_cast<std::size_t>(fe.stride_bytes) *
+        static_cast<std::size_t>(fe.height);
+    return fe.data.size() >= required;
 }
 
 } // namespace
@@ -135,23 +115,49 @@ UiViewer::UiViewer(Logger& log, Config cfg)
 
 // -------------------- callbacks (thread-safe) --------------------
 void UiViewer::onFrame(const FrameEvent& fe) {
-    if (fe.width <= 0 || fe.height <= 0) return;
-
-    const std::size_t expected =
-        static_cast<std::size_t>(fe.width) * static_cast<std::size_t>(fe.height);
-
-    if (fe.data.size() < expected) return;
+    if (!frameReadableByUi(fe)) {
+        return;
+    }
 
     std::lock_guard<std::mutex> lock(m_);
-    cv::Mat tmp(fe.height, fe.width, CV_8UC1, const_cast<uint8_t*>(fe.data.data()));
-    tmp.copyTo(gray_);
+
+    switch (fe.format) {
+        case PixelFormat::Gray8: {
+            cv::Mat tmp(fe.height,
+                        fe.width,
+                        CV_8UC1,
+                        const_cast<uint8_t*>(fe.data.data()),
+                        static_cast<std::size_t>(fe.stride_bytes));
+            tmp.copyTo(gray_);
+            break;
+        }
+
+        case PixelFormat::RGB888: {
+            cv::Mat rgb(fe.height,
+                        fe.width,
+                        CV_8UC3,
+                        const_cast<uint8_t*>(fe.data.data()),
+                        static_cast<std::size_t>(fe.stride_bytes));
+            cv::cvtColor(rgb, gray_, cv::COLOR_RGB2GRAY);
+            break;
+        }
+
+        case PixelFormat::BGR888: {
+            cv::Mat bgr(fe.height,
+                        fe.width,
+                        CV_8UC3,
+                        const_cast<uint8_t*>(fe.data.data()),
+                        static_cast<std::size_t>(fe.stride_bytes));
+            cv::cvtColor(bgr, gray_, cv::COLOR_BGR2GRAY);
+            break;
+        }
+    }
 }
 
 void UiViewer::onEstimate(const SunEstimate& est) {
     std::lock_guard<std::mutex> lock(m_);
     lastEst_ = est;
 
-    // We align cx/cy to the most recent sample slot (the command slot)
     if (hist_count_ > 0 && !hist_cx_.empty()) {
         const int N = static_cast<int>(hist_cx_.size());
         const int idx = (hist_head_ - 1 + N) % N;
@@ -169,12 +175,10 @@ void UiViewer::onCommand(const ActuatorCommand& cmd) {
     std::lock_guard<std::mutex> lock(m_);
     lastCmd_ = cmd;
 
-    // Advance ring buffer clock here (one sample per actuator update)
     pushSample_(cmd.actuator_targets[0],
                 cmd.actuator_targets[1],
                 cmd.actuator_targets[2]);
 
-    // Align latest estimate to this same sample slot
     if (!hist_cx_.empty()) {
         const int N = static_cast<int>(hist_cx_.size());
         const int idx = (hist_head_ - 1 + N) % N;
@@ -182,7 +186,6 @@ void UiViewer::onCommand(const ActuatorCommand& cmd) {
         hist_cy_[idx] = lastEst_.cy;
     }
 
-    // Align latest latency to this same slot
     if (!hist_lat_[0].empty()) {
         const int N = static_cast<int>(hist_lat_[0].size());
         const int idx = (hist_head_ - 1 + N) % N;
@@ -196,7 +199,6 @@ void UiViewer::onLatency(const LatencySample& ls) {
     std::lock_guard<std::mutex> lock(m_);
     lastLat_ = ls;
 
-    // Write latency into most recently written sample slot (if any)
     if (hist_count_ > 0) {
         pushLatency_(ls.cap_to_est_ms, ls.est_to_ctrl_ms, ls.ctrl_to_act_ms);
     }
@@ -253,7 +255,6 @@ void UiViewer::pushLatency_(float a, float b, float c) {
 }
 
 void UiViewer::pushCentroid_(float cx, float cy) {
-    // optional; not used as clock
     const int N = static_cast<int>(hist_cx_.size());
     if (N <= 0) return;
 
@@ -266,13 +267,11 @@ void UiViewer::pushCentroid_(float cx, float cy) {
 void UiViewer::drawOverlay_(cv::Mat& top, float conf, int thr) {
     const int font = cv::FONT_HERSHEY_SIMPLEX;
 
-    // pixel error relative to image center
     const float cx0 = 0.5f * static_cast<float>(top.cols);
     const float cy0 = 0.5f * static_cast<float>(top.rows);
     const float ex  = lastEst_.cx - cx0;
     const float ey  = lastEst_.cy - cy0;
 
-    // text block positions (fixed + clean)
     drawTextBox(top,
                 "thr=" + std::to_string(thr) + "   conf=" + fmt(conf, 6),
                 {20, 36}, font, 0.85, {255,255,255}, 2, {0,0,0}, 0.55);
@@ -294,37 +293,32 @@ void UiViewer::drawOverlay_(cv::Mat& top, float conf, int thr) {
                 "tilt=" + fmt(tilt_deg, 3) + " deg   pan=" + fmt(pan_deg, 3) + " deg",
                 {20, 116}, font, 0.85, {0,255,0}, 2, {0,0,0}, 0.55);
 
-    // arrows
-    // --- arrows (clean + intuitive) ---
-const cv::Point c(top.cols / 2, top.rows / 2);
+    const cv::Point c(top.cols / 2, top.rows / 2);
 
-// only draw if we have a valid estimate
-if (conf > 0.0f) {
-    const cv::Point s(
-        static_cast<int>(std::lround(lastEst_.cx)),
-        static_cast<int>(std::lround(lastEst_.cy))
-    );
+    if (conf > 0.0f) {
+        const cv::Point s(
+            static_cast<int>(std::lround(lastEst_.cx)),
+            static_cast<int>(std::lround(lastEst_.cy))
+        );
 
-    // Yellow error arrow: center -> centroid
-    cv::arrowedLine(top, c, s, cv::Scalar(0,255,255), 2, cv::LINE_AA, 0, 0.18);
-    cv::circle(top, s, 7, cv::Scalar(0,255,255), 2, cv::LINE_AA);
+        cv::arrowedLine(top, c, s, cv::Scalar(0,255,255), 2, cv::LINE_AA, 0, 0.18);
+        cv::circle(top, s, 7, cv::Scalar(0,255,255), 2, cv::LINE_AA);
 
-    drawTextBox(top, "ERR",
-                {s.x + 14, s.y - 12},
-                cv::FONT_HERSHEY_SIMPLEX, 0.7,
-                cv::Scalar(0,255,255), 2,
-                cv::Scalar(0,0,0), 0.55);
-
-    // Green correction arrow: centroid -> center
-    if (cfg_.show_setpoint_overlay) {
-        cv::arrowedLine(top, s, c, cv::Scalar(0,255,0), 3, cv::LINE_AA, 0, 0.22);
-        drawTextBox(top, "SP",
-                    {c.x + 14, c.y - 12},
+        drawTextBox(top, "ERR",
+                    {s.x + 14, s.y - 12},
                     cv::FONT_HERSHEY_SIMPLEX, 0.7,
-                    cv::Scalar(0,255,0), 2,
+                    cv::Scalar(0,255,255), 2,
                     cv::Scalar(0,0,0), 0.55);
+
+        if (cfg_.show_setpoint_overlay) {
+            cv::arrowedLine(top, s, c, cv::Scalar(0,255,0), 3, cv::LINE_AA, 0, 0.22);
+            drawTextBox(top, "SP",
+                        {c.x + 14, c.y - 12},
+                        cv::FONT_HERSHEY_SIMPLEX, 0.7,
+                        cv::Scalar(0,255,0), 2,
+                        cv::Scalar(0,0,0), 0.55);
+        }
     }
-}
 }
 
 void UiViewer::drawSetpointOverlay_(cv::Mat&) {
@@ -333,14 +327,12 @@ void UiViewer::drawSetpointOverlay_(cv::Mat&) {
 
 // -------------------- plots --------------------
 void UiViewer::drawPlots_(cv::Mat& vis) {
-
     const int H = std::max(180, cfg_.plot_height);
     const int W = vis.cols;
 
     cv::Rect plotRect(0, vis.rows - H, W, H);
     cv::rectangle(vis, plotRect, cv::Scalar(255,255,255), cv::FILLED);
 
-    // margins like MATLAB
     const int L = 62, R = 14, T = 26, B = 14;
     cv::Rect ax(plotRect.x + L,
                 plotRect.y + T,
@@ -367,7 +359,6 @@ void UiViewer::drawPlots_(cv::Mat& vis) {
         return idx % N;
     };
 
-    // autoscale from visible window only
     float mn = std::numeric_limits<float>::infinity();
     float mx = -std::numeric_limits<float>::infinity();
     for (int i = 0; i < maxSamples; ++i) {
@@ -377,9 +368,13 @@ void UiViewer::drawPlots_(cv::Mat& vis) {
             mx = std::max(mx, hist_u_[k][idx]);
         }
     }
-    if (!std::isfinite(mn) || !std::isfinite(mx) || mn == mx) { mn = 0.f; mx = 1.f; }
+    if (!std::isfinite(mn) || !std::isfinite(mx) || mn == mx) {
+        mn = 0.f;
+        mx = 1.f;
+    }
     const float r = (mx - mn);
-    mn -= 0.08f * r;  mx += 0.08f * r;
+    mn -= 0.08f * r;
+    mx += 0.08f * r;
 
     auto xOf = [&](int back) -> int {
         const int xi = ax.x + (ax.width - 1) - back * stride;
@@ -393,7 +388,6 @@ void UiViewer::drawPlots_(cv::Mat& vis) {
         return std::clamp(yi, ax.y, ax.y + ax.height - 1);
     };
 
-    // grid
     for (int i = 1; i <= 4; ++i) {
         const int y = ax.y + (i * ax.height) / 5;
         cv::line(vis, {ax.x, y}, {ax.x + ax.width, y}, cv::Scalar(230,230,230), 1);
@@ -403,7 +397,6 @@ void UiViewer::drawPlots_(cv::Mat& vis) {
         cv::line(vis, {x, ax.y}, {x, ax.y + ax.height}, cv::Scalar(242,242,242), 1);
     }
 
-    // y ticks
     for (int i = 0; i <= 4; ++i) {
         const float a = static_cast<float>(i) / 4.0f;
         const float val = mx - a * (mx - mn);
@@ -416,12 +409,10 @@ void UiViewer::drawPlots_(cv::Mat& vis) {
                     cv::FONT_HERSHEY_SIMPLEX, 0.45, cv::Scalar(0,0,0), 1, cv::LINE_AA);
     }
 
-    // title (left)
     cv::putText(vis, "Actuator Targets (u0, u1, u2)",
                 {ax.x, ax.y - 8},
                 cv::FONT_HERSHEY_SIMPLEX, 0.60, cv::Scalar(0,0,0), 1, cv::LINE_AA);
 
-    // legend (right aligned using text widths)
     auto putLegendRight = [&](int y) {
         const int font = cv::FONT_HERSHEY_SIMPLEX;
         const double fs = 0.60;
@@ -453,18 +444,20 @@ void UiViewer::drawPlots_(cv::Mat& vis) {
     };
     putLegendRight(ax.y - 8);
 
-    // traces
     const cv::Scalar colU[3] = { {0,255,255}, {255,255,0}, {255,0,255} };
     for (int k = 0; k < 3; ++k) {
-        cv::Point prev; bool hasPrev = false;
+        cv::Point prev;
+        bool hasPrev = false;
         for (int i = 0; i < maxSamples; ++i) {
             const int idx = idxAt(i);
             const cv::Point p(xOf(i), yOf(hist_u_[k][idx]));
             if (hasPrev) cv::line(vis, prev, p, colU[k], 2, cv::LINE_AA);
-            prev = p; hasPrev = true;
+            prev = p;
+            hasPrev = true;
         }
     }
 }
+
 // -------------------- tick --------------------
 bool UiViewer::tick() {
     cv::Mat grayCopy;
@@ -489,7 +482,6 @@ bool UiViewer::tick() {
         cv::Mat top = vis(cv::Rect(0, 0, cfg_.width, cfg_.height));
         cv::cvtColor(grayCopy, top, cv::COLOR_GRAY2BGR);
 
-        // centroid
         if (estCopy.confidence > 0.0f) {
             cv::circle(top,
                        cv::Point(static_cast<int>(std::lround(estCopy.cx)),
