@@ -7,6 +7,7 @@
 #include <cmath>
 
 using solar::ActuatorCommand;
+using solar::CommandStatus;
 using solar::Kinematics3RRS;
 using solar::Logger;
 using solar::PlatformSetpoint;
@@ -17,7 +18,7 @@ static bool isFinite(float x) {
 
 TEST(Kinematics3RRS_outputs_in_range_and_integer_like) {
     Logger log;
-    Kinematics3RRS::Config cfg; // defaults
+    Kinematics3RRS::Config cfg;
     Kinematics3RRS kin(log, cfg);
 
     std::atomic<bool> got{false};
@@ -36,6 +37,7 @@ TEST(Kinematics3RRS_outputs_in_range_and_integer_like) {
     kin.onSetpoint(sp);
 
     REQUIRE(got.load());
+    REQUIRE(last.status == CommandStatus::Ok);
 
     for (int i = 0; i < 3; ++i) {
         const float deg = last.actuator_targets[static_cast<std::size_t>(i)];
@@ -43,7 +45,6 @@ TEST(Kinematics3RRS_outputs_in_range_and_integer_like) {
         REQUIRE(deg >= 0.0f);
         REQUIRE(deg <= 180.0f);
 
-        // Kinematics rounds via lround() → should be very close to an integer.
         const float nearest = std::round(deg);
         REQUIRE_NEAR(deg, nearest, 1e-6f);
     }
@@ -51,7 +52,7 @@ TEST(Kinematics3RRS_outputs_in_range_and_integer_like) {
 
 TEST(Kinematics3RRS_continuity_small_setpoint_changes_small_output_changes) {
     Logger log;
-    Kinematics3RRS::Config cfg; // defaults
+    Kinematics3RRS::Config cfg;
     Kinematics3RRS kin(log, cfg);
 
     ActuatorCommand last{};
@@ -70,7 +71,6 @@ TEST(Kinematics3RRS_continuity_small_setpoint_changes_small_output_changes) {
     PlatformSetpoint sp{};
     sp.frame_id = 1;
 
-    // Start at a gentle pose, then nudge slightly.
     sp.tilt_rad = 0.05f;
     sp.pan_rad  = 0.02f;
     kin.onSetpoint(sp);
@@ -80,8 +80,9 @@ TEST(Kinematics3RRS_continuity_small_setpoint_changes_small_output_changes) {
     sp.pan_rad  = 0.021f;
     kin.onSetpoint(sp);
 
-    // Since inputs changed very slightly, outputs shouldn't jump wildly.
-    // We allow a few degrees because rounding + branch logic can still move a bit.
+    REQUIRE(prev.status == CommandStatus::Ok);
+    REQUIRE(last.status == CommandStatus::Ok);
+
     for (int i = 0; i < 3; ++i) {
         const float a = prev.actuator_targets[static_cast<std::size_t>(i)];
         const float b = last.actuator_targets[static_cast<std::size_t>(i)];
@@ -89,11 +90,11 @@ TEST(Kinematics3RRS_continuity_small_setpoint_changes_small_output_changes) {
     }
 }
 
-TEST(Kinematics3RRS_invalid_geometry_falls_back_to_last_valid) {
+TEST(Kinematics3RRS_invalid_geometry_is_surfaced_explicitly) {
     Logger log;
 
     Kinematics3RRS::Config cfg;
-    cfg.horn_length_m = 0.0f; // invalid (forces fallback path)
+    cfg.horn_length_m = 0.0f; // invalid config
     Kinematics3RRS kin(log, cfg);
 
     ActuatorCommand last{};
@@ -112,7 +113,8 @@ TEST(Kinematics3RRS_invalid_geometry_falls_back_to_last_valid) {
     kin.onSetpoint(sp);
     REQUIRE(got);
 
-    // Should output last_valid_deg_ (initialized to neutral config)
+    REQUIRE(last.status == CommandStatus::KinematicsInvalidConfig);
+
     for (int i = 0; i < 3; ++i) {
         REQUIRE_NEAR(last.actuator_targets[static_cast<std::size_t>(i)],
                      cfg.servo_neutral_deg[static_cast<std::size_t>(i)], 1e-6f);
