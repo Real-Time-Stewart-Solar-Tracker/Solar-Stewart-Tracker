@@ -216,4 +216,4 @@ void Kinematics3RRS::computeIK_(const PlatformSetpoint& sp) {
     emitCommand_(cmd);
 }
 
-} // namespace solar
+} // namespace solar// final refinements
