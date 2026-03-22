@@ -7,9 +7,14 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 
-#include <vector>
+#include <array>
+#include <cstring>
 
 namespace solar::hal {
+
+namespace {
+constexpr std::size_t kMaxWriteRegBytes = 32;
+}
 
 LinuxI2CDevice::LinuxI2CDevice(std::string dev_path, uint8_t address) noexcept {
     fd_ = ::open(dev_path.c_str(), O_RDWR | O_CLOEXEC);
@@ -45,13 +50,17 @@ bool LinuxI2CDevice::write_reg_u8(uint8_t reg, uint8_t value) noexcept {
 bool LinuxI2CDevice::write_reg_bytes(uint8_t reg, const uint8_t* data, size_t len) noexcept {
     if (fd_ < 0) return false;
     if (len > 0 && data == nullptr) return false;
+    if (len > kMaxWriteRegBytes) return false;
 
-    std::vector<uint8_t> buf;
-    buf.reserve(1 + len);
-    buf.push_back(reg);
-    for (size_t i = 0; i < len; ++i) buf.push_back(data[i]);
+    std::array<uint8_t, 1 + kMaxWriteRegBytes> buf{};
+    buf[0] = reg;
 
-    return ::write(fd_, buf.data(), buf.size()) == static_cast<ssize_t>(buf.size());
+    if (len > 0) {
+        std::memcpy(buf.data() + 1, data, len);
+    }
+
+    const size_t total = 1 + len;
+    return ::write(fd_, buf.data(), total) == static_cast<ssize_t>(total);
 }
 
 bool LinuxI2CDevice::read_reg_bytes(uint8_t reg, uint8_t* data, size_t len) noexcept {
