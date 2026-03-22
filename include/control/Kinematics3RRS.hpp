@@ -68,4 +68,4 @@ private:
     CommandCallback cmdCb_{};
 };
 
-} // namespace solar
+} // namespace solar// kinematics improvements
