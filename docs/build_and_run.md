@@ -1,6 +1,6 @@
 # Build and Run
 
-Target platform: Raspberry Pi OS (Linux)  
+Target platform: Raspberry Pi OS (Linux)
 Development platforms: Linux / Windows (CMake + C++17)
 
 ---
@@ -157,4 +157,8 @@ Output:
 rm -rf build
 cmake -S . -B build
 cmake --build build -j
+<<<<<<< HEAD
 ```
+=======
+```
+>>>>>>> 5db4299 (revise build and run instructions for final platform and workflow support)
