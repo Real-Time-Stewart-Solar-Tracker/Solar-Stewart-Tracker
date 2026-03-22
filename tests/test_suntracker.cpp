@@ -1,132 +1,284 @@
 #include "test_common.hpp"
 
 #include "vision/SunTracker.hpp"
-#include "common/Types.hpp"
-#include "common/Logger.hpp"
 
 #include <chrono>
 #include <cstdint>
 #include <vector>
 
-using namespace solar;
+namespace {
 
-static FrameEvent makeFrame(int w, int h, uint8_t bg) {
-    FrameEvent fe;
-    fe.frame_id = 1;
-    fe.t_capture = std::chrono::steady_clock::now();
-    fe.width = w;
-    fe.height = h;
-    fe.data.assign(static_cast<std::size_t>(w) * static_cast<std::size_t>(h), bg);
-    return fe;
+solar::FrameEvent makeFrame(int width,
+                            int height,
+                            int stride_bytes,
+                            solar::PixelFormat format,
+                            std::vector<std::uint8_t> data) {
+    solar::FrameEvent frame{};
+    frame.frame_id = 42;
+    frame.t_capture = std::chrono::steady_clock::now();
+    frame.width = width;
+    frame.height = height;
+    frame.stride_bytes = stride_bytes;
+    frame.format = format;
+    frame.data = std::move(data);
+    return frame;
 }
 
-static void drawSpot(FrameEvent& fe, int cx, int cy, int r, uint8_t val) {
-    const int w = fe.width;
-    const int h = fe.height;
-    const int r2 = r * r;
-
-    for (int y = cy - r; y <= cy + r; ++y) {
-        if (y < 0 || y >= h) continue;
-
-        for (int x = cx - r; x <= cx + r; ++x) {
-            if (x < 0 || x >= w) continue;
-
-            const int dx = x - cx;
-            const int dy = y - cy;
-
-            if (dx * dx + dy * dy <= r2) {
-                fe.data[
-                    static_cast<std::size_t>(y) * static_cast<std::size_t>(w)
-                    + static_cast<std::size_t>(x)
-                ] = val;
-            }
-        }
-    }
+solar::FrameEvent makeGray8PackedFrame(int width, int height, std::uint8_t fill = 0U) {
+    const int stride = width;
+    return makeFrame(width,
+                     height,
+                     stride,
+                     solar::PixelFormat::Gray8,
+                     std::vector<std::uint8_t>(static_cast<std::size_t>(stride * height), fill));
 }
+
+solar::FrameEvent makeGray8PaddedFrame(int width, int height, int stride_bytes, std::uint8_t fill = 0U) {
+    return makeFrame(width,
+                     height,
+                     stride_bytes,
+                     solar::PixelFormat::Gray8,
+                     std::vector<std::uint8_t>(static_cast<std::size_t>(stride_bytes * height), fill));
+}
+
+solar::FrameEvent makeRgbFrame(int width, int height, std::uint8_t fill = 0U) {
+    const int stride = width * 3;
+    return makeFrame(width,
+                     height,
+                     stride,
+                     solar::PixelFormat::RGB888,
+                     std::vector<std::uint8_t>(static_cast<std::size_t>(stride * height), fill));
+}
+
+solar::FrameEvent makeBgrFrame(int width, int height, std::uint8_t fill = 0U) {
+    const int stride = width * 3;
+    return makeFrame(width,
+                     height,
+                     stride,
+                     solar::PixelFormat::BGR888,
+                     std::vector<std::uint8_t>(static_cast<std::size_t>(stride * height), fill));
+}
+
+void setGrayPixel(solar::FrameEvent& frame, int x, int y, std::uint8_t value) {
+    const std::size_t idx =
+        static_cast<std::size_t>(y) * static_cast<std::size_t>(frame.stride_bytes) +
+        static_cast<std::size_t>(x);
+    frame.data[idx] = value;
+}
+
+void setRgbPixel(solar::FrameEvent& frame,
+                 int x,
+                 int y,
+                 std::uint8_t r,
+                 std::uint8_t g,
+                 std::uint8_t b) {
+    const std::size_t idx =
+        static_cast<std::size_t>(y) * static_cast<std::size_t>(frame.stride_bytes) +
+        static_cast<std::size_t>(x) * 3U;
+    frame.data[idx + 0U] = r;
+    frame.data[idx + 1U] = g;
+    frame.data[idx + 2U] = b;
+}
+
+void setBgrPixel(solar::FrameEvent& frame,
+                 int x,
+                 int y,
+                 std::uint8_t b,
+                 std::uint8_t g,
+                 std::uint8_t r) {
+    const std::size_t idx =
+        static_cast<std::size_t>(y) * static_cast<std::size_t>(frame.stride_bytes) +
+        static_cast<std::size_t>(x) * 3U;
+    frame.data[idx + 0U] = b;
+    frame.data[idx + 1U] = g;
+    frame.data[idx + 2U] = r;
+}
+
+struct EstimateCapture {
+    bool called{false};
+    solar::SunEstimate estimate{};
+};
+
+} // namespace
 
 TEST(SunTracker_NoBrightPixels_ConfidenceZero) {
-    Logger log;
-
-    SunTracker::Config cfg;
+    solar::Logger log;
+    solar::SunTracker::Config cfg{};
     cfg.threshold = 200;
-    cfg.min_pixels = 10;
+    cfg.min_pixels = 3;
+    cfg.confidence_scale = 1.0f;
 
-    SunTracker trk(log, cfg);
+    solar::SunTracker tracker(log, cfg);
 
-    SunEstimate out;
-    bool got = false;
-
-    trk.registerEstimateCallback([&](const SunEstimate& e) {
-        out = e;
-        got = true;
+    EstimateCapture cap{};
+    tracker.registerEstimateCallback([&](const solar::SunEstimate& est) {
+        cap.called = true;
+        cap.estimate = est;
     });
 
-    auto fe = makeFrame(64, 48, 50);  // below threshold
-    trk.onFrame(fe);
+    auto frame = makeGray8PackedFrame(8, 6, 0U);
+    tracker.onFrame(frame);
 
-    REQUIRE(got);
-    REQUIRE(out.confidence == 0.0f);
+    REQUIRE(cap.called);
+    REQUIRE(cap.estimate.frame_id == frame.frame_id);
+    REQUIRE(cap.estimate.confidence == 0.0f);
+    REQUIRE(cap.estimate.cx == 0.0f);
+    REQUIRE(cap.estimate.cy == 0.0f);
 }
 
-TEST(SunTracker_BrightSpot_CentroidApproxCorrect) {
-    Logger log;
-
-    SunTracker::Config cfg;
+TEST(SunTracker_BrightSpot_Gray8Packed_CentroidApproxCorrect) {
+    solar::Logger log;
+    solar::SunTracker::Config cfg{};
     cfg.threshold = 200;
-    cfg.min_pixels = 10;
+    cfg.min_pixels = 1;
+    cfg.confidence_scale = 1.0f;
 
-    SunTracker trk(log, cfg);
+    solar::SunTracker tracker(log, cfg);
 
-    SunEstimate out;
-    bool got = false;
-
-    trk.registerEstimateCallback([&](const SunEstimate& e) {
-        out = e;
-        got = true;
+    EstimateCapture cap{};
+    tracker.registerEstimateCallback([&](const solar::SunEstimate& est) {
+        cap.called = true;
+        cap.estimate = est;
     });
 
-    auto fe = makeFrame(64, 48, 10);
-    drawSpot(fe, 20, 30, 4, 240);
+    auto frame = makeGray8PackedFrame(10, 10, 0U);
 
-    trk.onFrame(fe);
+    // 3x3 bright block centred at (6, 4)
+    for (int y = 3; y <= 5; ++y) {
+        for (int x = 5; x <= 7; ++x) {
+            setGrayPixel(frame, x, y, 255U);
+        }
+    }
 
-    REQUIRE(got);
-    REQUIRE(out.confidence > 0.0f);
-    REQUIRE_NEAR(out.cx, 20.0f, 1.5f);
-    REQUIRE_NEAR(out.cy, 30.0f, 1.5f);
+    tracker.onFrame(frame);
+
+    REQUIRE(cap.called);
+    REQUIRE(cap.estimate.confidence > 0.0f);
+    REQUIRE_NEAR(cap.estimate.cx, 6.0f, 0.01f);
+    REQUIRE_NEAR(cap.estimate.cy, 4.0f, 0.01f);
 }
 
-TEST(SunTracker_BrightSpot_HigherAreaHigherConfidence) {
-    Logger log;
-
-    SunTracker::Config cfg;
+TEST(SunTracker_BrightSpot_Gray8PaddedStride_CentroidApproxCorrect) {
+    solar::Logger log;
+    solar::SunTracker::Config cfg{};
     cfg.threshold = 200;
-    cfg.min_pixels = 10;
-    cfg.confidence_scale = 20.0f;
+    cfg.min_pixels = 1;
+    cfg.confidence_scale = 1.0f;
 
-    SunTracker trk(log, cfg);
+    solar::SunTracker tracker(log, cfg);
 
-    SunEstimate small, large;
-    int count = 0;
-
-    trk.registerEstimateCallback([&](const SunEstimate& e) {
-        if (count == 0) small = e;
-        else large = e;
-        count++;
+    EstimateCapture cap{};
+    tracker.registerEstimateCallback([&](const solar::SunEstimate& est) {
+        cap.called = true;
+        cap.estimate = est;
     });
 
-    // small spot
-    auto fe1 = makeFrame(64, 48, 10);
-    fe1.frame_id = 1;
-    drawSpot(fe1, 32, 24, 2, 240);
-    trk.onFrame(fe1);
+    auto frame = makeGray8PaddedFrame(8, 6, 12, 0U);
 
-    // larger spot
-    auto fe2 = makeFrame(64, 48, 10);
-    fe2.frame_id = 2;
-    drawSpot(fe2, 32, 24, 6, 240);
-    trk.onFrame(fe2);
+    // Bright block centred at (2, 3)
+    for (int y = 2; y <= 4; ++y) {
+        for (int x = 1; x <= 3; ++x) {
+            setGrayPixel(frame, x, y, 250U);
+        }
+    }
 
-    REQUIRE(count == 2);
-    REQUIRE(large.confidence >= small.confidence);
+    tracker.onFrame(frame);
+
+    REQUIRE(cap.called);
+    REQUIRE(cap.estimate.confidence > 0.0f);
+    REQUIRE_NEAR(cap.estimate.cx, 2.0f, 0.01f);
+    REQUIRE_NEAR(cap.estimate.cy, 3.0f, 0.01f);
+}
+
+TEST(SunTracker_BrightSpot_RGB888_CentroidApproxCorrect) {
+    solar::Logger log;
+    solar::SunTracker::Config cfg{};
+    cfg.threshold = 200;
+    cfg.min_pixels = 1;
+    cfg.confidence_scale = 1.0f;
+
+    solar::SunTracker tracker(log, cfg);
+
+    EstimateCapture cap{};
+    tracker.registerEstimateCallback([&](const solar::SunEstimate& est) {
+        cap.called = true;
+        cap.estimate = est;
+    });
+
+    auto frame = makeRgbFrame(9, 7, 0U);
+
+    // Bright white block centred at (4, 2)
+    for (int y = 1; y <= 3; ++y) {
+        for (int x = 3; x <= 5; ++x) {
+            setRgbPixel(frame, x, y, 255U, 255U, 255U);
+        }
+    }
+
+    tracker.onFrame(frame);
+
+    REQUIRE(cap.called);
+    REQUIRE(cap.estimate.confidence > 0.0f);
+    REQUIRE_NEAR(cap.estimate.cx, 4.0f, 0.01f);
+    REQUIRE_NEAR(cap.estimate.cy, 2.0f, 0.01f);
+}
+
+TEST(SunTracker_BrightSpot_BGR888_CentroidApproxCorrect) {
+    solar::Logger log;
+    solar::SunTracker::Config cfg{};
+    cfg.threshold = 200;
+    cfg.min_pixels = 1;
+    cfg.confidence_scale = 1.0f;
+
+    solar::SunTracker tracker(log, cfg);
+
+    EstimateCapture cap{};
+    tracker.registerEstimateCallback([&](const solar::SunEstimate& est) {
+        cap.called = true;
+        cap.estimate = est;
+    });
+
+    auto frame = makeBgrFrame(9, 7, 0U);
+
+    // Bright white block centred at (6, 5)
+    for (int y = 4; y <= 6; ++y) {
+        for (int x = 5; x <= 7; ++x) {
+            setBgrPixel(frame, x, y, 255U, 255U, 255U);
+        }
+    }
+
+    tracker.onFrame(frame);
+
+    REQUIRE(cap.called);
+    REQUIRE(cap.estimate.confidence > 0.0f);
+    REQUIRE_NEAR(cap.estimate.cx, 6.0f, 0.01f);
+    REQUIRE_NEAR(cap.estimate.cy, 5.0f, 0.01f);
+}
+
+TEST(SunTracker_InvalidBuffer_DoesNotEmitEstimate) {
+    solar::Logger log;
+    solar::SunTracker::Config cfg{};
+    cfg.threshold = 200;
+    cfg.min_pixels = 1;
+    cfg.confidence_scale = 1.0f;
+
+    solar::SunTracker tracker(log, cfg);
+
+    EstimateCapture cap{};
+    tracker.registerEstimateCallback([&](const solar::SunEstimate& est) {
+        cap.called = true;
+        cap.estimate = est;
+    });
+
+    solar::FrameEvent frame{};
+    frame.frame_id = 77;
+    frame.t_capture = std::chrono::steady_clock::now();
+    frame.width = 8;
+    frame.height = 6;
+    frame.stride_bytes = 8;
+    frame.format = solar::PixelFormat::Gray8;
+    frame.data.resize(10U, 0U); // intentionally too small; should be at least 48 bytes
+
+    tracker.onFrame(frame);
+
+    REQUIRE(!cap.called);
 }

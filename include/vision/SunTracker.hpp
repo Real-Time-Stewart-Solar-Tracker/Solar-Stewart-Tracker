@@ -1,7 +1,7 @@
 #pragma once
 
-#include <cstdint>
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <mutex>
 
@@ -13,15 +13,27 @@ namespace solar {
 /**
  * @brief Vision module that detects the sun centroid in a frame.
  *
- * Consumes FrameEvent objects (grayscale input) and produces SunEstimate outputs
- * via a registered callback. Designed for event-driven pipelines (no internal threads).
+ * The tracker consumes @ref FrameEvent objects and emits @ref SunEstimate
+ * results through a registered callback. The class is event-driven and does
+ * not create internal worker threads.
  *
- * Input:
- * - FrameEvent::data contains width * height bytes (8-bit grayscale).
+ * Supported frame formats:
+ * - @ref PixelFormat::Gray8
+ * - @ref PixelFormat::RGB888
+ * - @ref PixelFormat::BGR888
  *
- * Output:
- * - Centroid (cx, cy) in pixel coordinates
- * - Confidence in range [0, 1]
+ * Supported memory layouts:
+ * - packed rows
+ * - padded rows, provided @ref FrameEvent::stride_bytes correctly describes
+ *   the byte distance between row starts
+ *
+ * Frame contract requirements:
+ * - width > 0
+ * - height > 0
+ * - stride_bytes >= width * bytesPerPixel(format)
+ * - data.size() >= stride_bytes * height
+ *
+ * Unsupported or invalid frames are rejected safely and produce no estimate.
  */
 class SunTracker {
 public:
@@ -30,7 +42,7 @@ public:
 
     /// @brief Sun detection configuration parameters.
     struct Config {
-        /// @brief Pixel intensity threshold for sun segmentation.
+        /// @brief Pixel-intensity threshold used for sun segmentation.
         uint8_t threshold{200};
 
         /// @brief Minimum number of above-threshold pixels required for a valid detection.
@@ -40,32 +52,77 @@ public:
         float confidence_scale{10.0f};
     };
 
-    /// @brief Construct tracker with logger and configuration.
+    /**
+     * @brief Construct the tracker with logger and configuration.
+     * @param log Logger used for warnings/debug information.
+     * @param cfg Runtime configuration.
+     */
     SunTracker(Logger& log, Config cfg);
 
     SunTracker(const SunTracker&) = delete;
     SunTracker& operator=(const SunTracker&) = delete;
 
-    /// @brief Register callback to receive SunEstimate outputs.
+    /**
+     * @brief Register the callback used to receive @ref SunEstimate outputs.
+     * @param cb Callback to invoke after processing a valid frame.
+     */
     void registerEstimateCallback(EstimateCallback cb);
 
-    /// @brief Update threshold at runtime (thread-safe).
+    /**
+     * @brief Update the segmentation threshold at runtime.
+     * @param thr New threshold value.
+     */
     void setThreshold(uint8_t thr);
 
-    /// @brief Process one frame and emit a SunEstimate if a callback is set.
+    /**
+     * @brief Process a single frame.
+     *
+     * The frame may be Gray8, RGB888, or BGR888 and may use padded rows.
+     * The implementation validates the frame contract before reading pixels.
+     *
+     * On successful processing, a @ref SunEstimate is emitted through the
+     * registered callback if one is present.
+     *
+     * Invalid frames are rejected safely.
+     *
+     * @param frame Input frame to analyse.
+     */
     void onFrame(const FrameEvent& frame);
 
-    /// @brief Get current configuration.
+    /**
+     * @brief Return the current tracker configuration.
+     */
     Config config() const;
+
+private:
+    /**
+     * @brief Validate that a frame satisfies the current public frame contract.
+     * @param frame Frame to validate.
+     * @return true if the frame layout is valid and readable.
+     */
+    bool isFrameValid_(const FrameEvent& frame) const;
+
+    /**
+     * @brief Read one pixel intensity as an 8-bit grayscale-like value.
+     *
+     * Gray8 returns the source byte directly.
+     * RGB888 and BGR888 are converted to luminance-style intensity.
+     *
+     * @param frame Source frame.
+     * @param x Pixel x-coordinate.
+     * @param y Pixel y-coordinate.
+     * @return Pixel intensity in range [0, 255].
+     */
+    uint8_t intensityAt_(const FrameEvent& frame, int x, int y) const;
 
 private:
     Logger& log_;
     Config cfg_;
 
-    /// @brief Protects cfg_ for runtime updates.
+    /// @brief Protects runtime configuration updates.
     mutable std::mutex cfgMutex_;
 
-    /// @brief Protects estimate callback registration and invocation.
+    /// @brief Protects callback registration and callback access.
     mutable std::mutex cbMtx_;
 
     /// @brief Registered estimate callback (may be empty).
