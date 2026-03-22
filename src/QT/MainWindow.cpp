@@ -22,55 +22,42 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
+#include <cstdio>
 
 using namespace QtCharts;
 
 namespace solar {
+namespace {
 
-// ------------------------------
-// YUV420p -> RGB888 (CPU)
-// buf layout: [Y plane w*h][U plane w*h/4][V plane w*h/4]
-// ------------------------------
-static QImage yuv420pToRgb888(const std::vector<uint8_t>& buf, int w, int h) {
-    const size_t ySize  = static_cast<size_t>(w) * static_cast<size_t>(h);
-    const size_t uvSize = ySize / 4;
-
-    QImage rgb(w, h, QImage::Format_RGB888);
-
-    const uint8_t* Y = buf.data();
-    const uint8_t* U = buf.data() + ySize;
-    const uint8_t* V = buf.data() + ySize + uvSize;
-
-    for (int y = 0; y < h; ++y) {
-        uint8_t* out = rgb.scanLine(y);
-        const int uvRow = (y / 2) * (w / 2);
-
-        for (int x = 0; x < w; ++x) {
-            const int yIdx  = y * w + x;
-            const int uvIdx = uvRow + (x / 2);
-
-            const int Yv = int(Y[yIdx]);
-            const int Uv = int(U[uvIdx]) - 128;
-            const int Vv = int(V[uvIdx]) - 128;
-
-            int R = Yv + int(1.402 * Vv);
-            int G = Yv - int(0.344136 * Uv) - int(0.714136 * Vv);
-            int B = Yv + int(1.772 * Uv);
-
-            R = std::clamp(R, 0, 255);
-            G = std::clamp(G, 0, 255);
-            B = std::clamp(B, 0, 255);
-
-            out[3 * x + 0] = uint8_t(R);
-            out[3 * x + 1] = uint8_t(G);
-            out[3 * x + 2] = uint8_t(B);
-        }
+bool frameReadableForQt(const std::vector<uint8_t>& data,
+                        int width,
+                        int height,
+                        int strideBytes,
+                        PixelFormat format) {
+    if (width <= 0 || height <= 0 || strideBytes <= 0) {
+        return false;
     }
-    return rgb;
+
+    const std::size_t bpp = bytesPerPixel(format);
+    const std::size_t minStride =
+        static_cast<std::size_t>(width) * bpp;
+
+    if (static_cast<std::size_t>(strideBytes) < minStride) {
+        return false;
+    }
+
+    const std::size_t required =
+        static_cast<std::size_t>(strideBytes) *
+        static_cast<std::size_t>(height);
+
+    return data.size() >= required;
 }
 
+} // namespace
+
 // ------------------------------------------------------------
-// Converter worker: offloads heavy conversion from UI thread
+// Converter worker: converts FrameEvent data into a displayable QImage
 // ------------------------------------------------------------
 void MainWindow::startConverter_() {
     if (convRunning_.load()) return;
@@ -85,7 +72,7 @@ void MainWindow::stopConverter_() {
     convRunning_.store(false);
     {
         std::lock_guard<std::mutex> lk(convMutex_);
-        convHasFrame_ = true; // wake
+        convHasFrame_ = true; // wake the worker
     }
     convCv_.notify_all();
 
@@ -97,6 +84,8 @@ void MainWindow::converterLoop_() {
         std::shared_ptr<std::vector<uint8_t>> buf;
         int w = 0;
         int h = 0;
+        int stride = 0;
+        PixelFormat format = PixelFormat::Gray8;
 
         {
             std::unique_lock<std::mutex> lk(convMutex_);
@@ -109,25 +98,49 @@ void MainWindow::converterLoop_() {
             buf = latestBuf_;
             w = latestW_;
             h = latestH_;
+            stride = latestStride_;
+            format = latestFormat_;
             convHasFrame_ = false;
         }
 
-        if (!buf || buf->empty() || w <= 0 || h <= 0) continue;
-
-        const size_t graySize = static_cast<size_t>(w) * static_cast<size_t>(h);
-        const size_t rgbSize  = graySize * 3;
-        const size_t yuvSize  = graySize + (graySize / 2);
+        if (!buf || !frameReadableForQt(*buf, w, h, stride, format)) {
+            continue;
+        }
 
         QImage img;
 
-        if (buf->size() == graySize) {
-            img = QImage(buf->data(), w, h, w, QImage::Format_Grayscale8).copy();
-        } else if (buf->size() == rgbSize) {
-            img = QImage(buf->data(), w, h, w * 3, QImage::Format_RGB888).copy();
-        } else if (buf->size() == yuvSize) {
-            img = yuv420pToRgb888(*buf, w, h);
-        } else {
-            continue; // unknown format
+        switch (format) {
+            case PixelFormat::Gray8: {
+                img = QImage(buf->data(),
+                             w,
+                             h,
+                             stride,
+                             QImage::Format_Grayscale8).copy();
+                break;
+            }
+
+            case PixelFormat::RGB888: {
+                img = QImage(buf->data(),
+                             w,
+                             h,
+                             stride,
+                             QImage::Format_RGB888).copy();
+                break;
+            }
+
+            case PixelFormat::BGR888: {
+                // Qt5 portability: wrap as RGB888 and swap channels into a copied image.
+                img = QImage(buf->data(),
+                             w,
+                             h,
+                             stride,
+                             QImage::Format_RGB888).rgbSwapped().copy();
+                break;
+            }
+        }
+
+        if (img.isNull()) {
+            continue;
         }
 
         {
@@ -268,9 +281,10 @@ MainWindow::MainWindow(solar::SystemManager& sys, QWidget* parent)
     // Subscriptions (store newest, overwrite policy)
     // =============================
     sys_.registerFrameObserver([this](const solar::FrameEvent& fe) {
-        if (fe.width <= 0 || fe.height <= 0 || fe.data.empty()) return;
+        if (!frameReadableForQt(fe.data, fe.width, fe.height, fe.stride_bytes, fe.format)) {
+            return;
+        }
 
-        // One copy per frame here (not every 33ms timer tick)
         auto sp = std::make_shared<std::vector<uint8_t>>(fe.data);
 
         {
@@ -278,6 +292,8 @@ MainWindow::MainWindow(solar::SystemManager& sys, QWidget* parent)
             latestBuf_ = std::move(sp);
             latestW_ = fe.width;
             latestH_ = fe.height;
+            latestStride_ = fe.stride_bytes;
+            latestFormat_ = fe.format;
             convHasFrame_ = true;
         }
         convCv_.notify_one();
@@ -396,12 +412,12 @@ void MainWindow::updateCamera_() {
     QImage img;
     {
         std::lock_guard<std::mutex> lk(imgMutex_);
-        img = latestImg_; // cheap (implicit sharing)
+        img = latestImg_;
     }
 
     if (img.isNull()) return;
 
-    // Draw overlay on UI thread (QPainter safe)
+    // Draw overlay on UI thread
     QImage draw = img.copy();
     drawOverlay_(draw);
 
@@ -482,12 +498,13 @@ QPointF MainWindow::clampToImage_(QPointF p, int w, int h) {
 void MainWindow::drawOverlay_(QImage& img) {
     solar::SunEstimate est{};
     solar::PlatformSetpoint sp{};
-    bool haveEst = false, haveSp = false;
+    bool haveEst = false;
+    bool haveSp = false;
 
     {
         std::lock_guard<std::mutex> lk(ovMtx_);
         if (haveEst_) { est = lastEst_; haveEst = true; }
-        if (haveSp_)  { sp  = lastSp_;  haveSp  = true; }
+        if (haveSp_)  { sp = lastSp_;   haveSp = true; }
     }
 
     QPainter p(&img);
@@ -498,9 +515,11 @@ void MainWindow::drawOverlay_(QImage& img) {
     const double cx0 = w * 0.5;
     const double cy0 = h * 0.5;
 
-    double ex = 0.0, ey = 0.0;
+    double ex = 0.0;
+    double ey = 0.0;
     double conf = 0.0;
-    double estx = cx0, esty = cy0;
+    double estx = cx0;
+    double esty = cy0;
 
     if (haveEst) {
         estx = est.cx;
@@ -513,7 +532,7 @@ void MainWindow::drawOverlay_(QImage& img) {
     const double tiltDeg = haveSp ? (sp.tilt_rad * 180.0 / 3.14159265358979323846) : 0.0;
     const double panDeg  = haveSp ? (sp.pan_rad  * 180.0 / 3.14159265358979323846) : 0.0;
 
-    // box
+    // info box
     p.setPen(Qt::NoPen);
     p.setBrush(QColor(0, 0, 0, 140));
     p.drawRoundedRect(QRect(10, 10, 560, 95), 8, 8);
@@ -553,11 +572,11 @@ void MainWindow::drawOverlay_(QImage& img) {
     p.setPen(Qt::black);
     p.drawText(errBox, Qt::AlignCenter, "ERR");
 
-    // arrow
+    // Arrow
     p.setPen(QPen(QColor(0, 255, 0, 255), 3));
     p.drawLine(spPt, errPt);
 
-    // arrow head
+    // Arrow head
     const QPointF v = errPt - spPt;
     const double len = std::hypot(v.x(), v.y());
     if (len > 1.0) {
