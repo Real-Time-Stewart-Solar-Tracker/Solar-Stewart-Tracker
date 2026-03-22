@@ -36,8 +36,8 @@ TEST(Trajectory_CircularSetpoints_ProduceValidServoOutputs) {
     const float A = 0.10f; // amplitude in radians (small, safe)
 
     for (int k = 0; k < N; ++k) {
-        const float theta = static_cast<float>(2.0 * M_PI) * (static_cast<float>(k) / static_cast<float>(N));
-
+       constexpr float kPi = 3.14159265358979323846f;
+    const float theta = (2.0f * kPi) * (static_cast<float>(k) / static_cast<float>(N));
         PlatformSetpoint sp{};
         sp.frame_id = static_cast<uint64_t>(k + 1);
         sp.tilt_rad = A * std::sin(theta);
