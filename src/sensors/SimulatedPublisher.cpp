@@ -145,13 +145,13 @@ void SimulatedPublisher::run_() {
             if (n != static_cast<ssize_t>(sizeof(expirations))) continue;
 
             FrameEvent fe;
-            fe.frame_id  = ++frameId_;
-            fe.t_capture = clock::now();
-            fe.width     = cfg_.width;
-            fe.height    = cfg_.height;
+            fe.frame_id     = ++frameId_;
+            fe.t_capture    = clock::now();
+            fe.width        = cfg_.width;
+            fe.height       = cfg_.height;
+            fe.format       = PixelFormat::Gray8;
+            fe.stride_bytes = cfg_.width; // packed Gray8: 1 byte per pixel
 
-            fe.data.reserve(static_cast<std::size_t>(cfg_.width) *
-                            static_cast<std::size_t>(cfg_.height));
             generateFrame_(fe);
 
             FrameCallback cb;
@@ -170,15 +170,15 @@ void SimulatedPublisher::run_() {
 
 #elif defined(_WIN32)
 
-    // Windows: Waitable timer + stop event (no sleep-based timing)
-    stopEvent_ = CreateEvent(nullptr, TRUE, FALSE, nullptr); // manual reset
+    // Windows: waitable timer + stop event (no sleep-based timing)
+    stopEvent_ = CreateEvent(nullptr, TRUE, FALSE, nullptr);
     if (!stopEvent_) {
         log_.error("SimulatedPublisher: CreateEvent failed");
         running_.store(false);
         return;
     }
 
-    timer_ = CreateWaitableTimer(nullptr, FALSE, nullptr); // auto-reset timer
+    timer_ = CreateWaitableTimer(nullptr, FALSE, nullptr);
     if (!timer_) {
         log_.error("SimulatedPublisher: CreateWaitableTimer failed");
         CloseHandle(stopEvent_);
@@ -187,12 +187,11 @@ void SimulatedPublisher::run_() {
         return;
     }
 
-    // Period in 100ns units; negative = relative time
     const double period_s = 1.0 / static_cast<double>(cfg_.fps);
     const LONGLONG period_100ns = static_cast<LONGLONG>(period_s * 10'000'000.0);
 
     LARGE_INTEGER dueTime;
-    dueTime.QuadPart = -period_100ns; // first fire after one period
+    dueTime.QuadPart = -period_100ns;
 
     if (!SetWaitableTimer(timer_, &dueTime, static_cast<LONG>(period_s * 1000.0), nullptr, nullptr, FALSE)) {
         log_.error("SimulatedPublisher: SetWaitableTimer failed");
@@ -211,19 +210,17 @@ void SimulatedPublisher::run_() {
         if (!running_.load()) break;
 
         if (r == WAIT_OBJECT_0) {
-            // stopEvent signaled
             break;
         }
         if (r == WAIT_OBJECT_0 + 1) {
-            // timer fired
             FrameEvent fe;
-            fe.frame_id  = ++frameId_;
-            fe.t_capture = clock::now();
-            fe.width     = cfg_.width;
-            fe.height    = cfg_.height;
+            fe.frame_id     = ++frameId_;
+            fe.t_capture    = clock::now();
+            fe.width        = cfg_.width;
+            fe.height       = cfg_.height;
+            fe.format       = PixelFormat::Gray8;
+            fe.stride_bytes = cfg_.width; // packed Gray8: 1 byte per pixel
 
-            fe.data.reserve(static_cast<std::size_t>(cfg_.width) *
-                            static_cast<std::size_t>(cfg_.height));
             generateFrame_(fe);
 
             FrameCallback cb;
@@ -251,18 +248,19 @@ void SimulatedPublisher::run_() {
 void SimulatedPublisher::generateFrame_(FrameEvent& fe) {
     const int w = cfg_.width;
     const int h = cfg_.height;
+    const int stride = fe.stride_bytes;
     const int r = std::max(1, cfg_.spot_radius);
 
-    fe.data.assign(static_cast<std::size_t>(w) * static_cast<std::size_t>(h),
+    fe.data.assign(static_cast<std::size_t>(stride) * static_cast<std::size_t>(h),
                    cfg_.background);
 
-    float cx = w * 0.5f;
-    float cy = h * 0.5f;
+    float cx = static_cast<float>(w) * 0.5f;
+    float cy = static_cast<float>(h) * 0.5f;
 
     if (cfg_.moving_spot) {
         phase_ += 0.05f;
-        cx += w * 0.25f * std::cos(phase_);
-        cy += h * 0.20f * std::sin(phase_);
+        cx += static_cast<float>(w) * 0.25f * std::cos(phase_);
+        cy += static_cast<float>(h) * 0.20f * std::sin(phase_);
     }
 
     const int icx = static_cast<int>(std::round(cx));
@@ -276,17 +274,21 @@ void SimulatedPublisher::generateFrame_(FrameEvent& fe) {
             const int dx = x - icx;
             const int dy = y - icy;
             if ((dx * dx + dy * dy) <= r2) {
-                fe.data[static_cast<std::size_t>(y) * static_cast<std::size_t>(w) +
+                fe.data[static_cast<std::size_t>(y) * static_cast<std::size_t>(stride) +
                         static_cast<std::size_t>(x)] = cfg_.spot_value;
             }
         }
     }
 
     if (noise_) {
-        for (auto& px : fe.data) {
-            float v = static_cast<float>(px) + (*noise_)(rng_);
-            v = std::clamp(v, 0.0f, 255.0f);
-            px = static_cast<uint8_t>(v);
+        for (int y = 0; y < h; ++y) {
+            for (int x = 0; x < w; ++x) {
+                auto& px = fe.data[static_cast<std::size_t>(y) * static_cast<std::size_t>(stride) +
+                                   static_cast<std::size_t>(x)];
+                float v = static_cast<float>(px) + (*noise_)(rng_);
+                v = std::clamp(v, 0.0f, 255.0f);
+                px = static_cast<uint8_t>(v);
+            }
         }
     }
 }
