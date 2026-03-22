@@ -4,6 +4,8 @@
 #include <chrono>
 #include <cmath>
 #include <mutex>
+#include <string>
+#include <utility>
 
 namespace solar {
 
@@ -13,7 +15,6 @@ static float deg2rad(float d) { return d * PI / 180.0f; }
 static float rad2deg(float r) { return r * 180.0f / PI; }
 
 static float wrapAngle(float x) {
-    // Normalize to [-pi, pi]
     const float two_pi = 2.0f * PI;
     x = std::fmod(x + PI, two_pi);
     if (x < 0.0f) x += two_pi;
@@ -35,7 +36,7 @@ static float otherBranch(float q1, float q2, float q_cur) {
 }
 
 Kinematics3RRS::Kinematics3RRS(Logger& log, Config cfg)
-    : log_(log), cfg_(cfg) {
+    : log_(log), cfg_(std::move(cfg)) {
     last_valid_deg_ = cfg_.servo_neutral_deg;
 }
 
@@ -48,9 +49,16 @@ Kinematics3RRS::Config Kinematics3RRS::config() const { return cfg_; }
 
 void Kinematics3RRS::onSetpoint(const PlatformSetpoint& sp) { computeIK_(sp); }
 
+void Kinematics3RRS::emitCommand_(const ActuatorCommand& cmd) {
+    CommandCallback cb;
+    {
+        std::lock_guard<std::mutex> lk(cbMtx_);
+        cb = cmdCb_;
+    }
+    if (cb) cb(cmd);
+}
+
 void Kinematics3RRS::computeIK_(const PlatformSetpoint& sp) {
-    // - controller pan_rad comes from image X error => treat as *pitch* (Ry)
-    // - controller tilt_rad comes from image Y error => treat as *roll* (Rx)
     const float roll  = sp.tilt_rad; // Rx
     const float pitch = sp.pan_rad;  // Ry
 
@@ -79,26 +87,31 @@ void Kinematics3RRS::computeIK_(const PlatformSetpoint& sp) {
     const float L1 = cfg_.horn_length_m;
     const float L2 = cfg_.rod_length_m;
 
-    ActuatorCommand cmd;
-    cmd.frame_id  = sp.frame_id;
+    ActuatorCommand cmd{};
+    cmd.frame_id = sp.frame_id;
+    cmd.status   = CommandStatus::Ok;
 
-    // Basic sanity guard (prevents NaNs)
-    if (L1 <= 0.0f || L2 <= 0.0f || Rb <= 0.0f || Rp <= 0.0f) {
-        log_.warn("Kinematics3RRS: invalid geometry config (non-positive length/radius)");
+    // Static geometry validation.
+    if (L1 <= 0.0f || L2 <= 0.0f || Rb <= 0.0f || Rp <= 0.0f || h <= 0.0f) {
+        log_.error("Kinematics3RRS: invalid geometry config for frame " +
+                   std::to_string(sp.frame_id));
+
+        cmd.status = CommandStatus::KinematicsInvalidConfig;
         for (int i = 0; i < 3; ++i) {
             const std::size_t idx = static_cast<std::size_t>(i);
             cmd.actuator_targets[idx] = last_valid_deg_[idx];
         }
-        CommandCallback cb;
-        { std::lock_guard<std::mutex> lk(cbMtx_); cb = cmdCb_; }
-        if (cb) cb(cmd);
+
+        emitCommand_(cmd);
         return;
     }
+
+    bool usedFallback = false;
 
     for (int i = 0; i < 3; ++i) {
         const std::size_t idx = static_cast<std::size_t>(i);
 
-        // Base joint B_i (on base circle)
+        // Base joint B_i
         const float thb = deg2rad(cfg_.base_theta_deg[idx]);
         const float ctb = std::cos(thb);
         const float stb = std::sin(thb);
@@ -107,7 +120,7 @@ void Kinematics3RRS::computeIK_(const PlatformSetpoint& sp) {
         const float By = Rb * stb;
         const float Bz = 0.f;
 
-        // Platform joint P_i in platform local (on platform circle)
+        // Platform joint P_i in local frame
         const float thp  = deg2rad(cfg_.plat_theta_deg[idx]);
         const float Px_l = Rp * std::cos(thp);
         const float Py_l = Rp * std::sin(thp);
@@ -119,14 +132,10 @@ void Kinematics3RRS::computeIK_(const PlatformSetpoint& sp) {
         float Pz = R[2][0] * Px_l + R[2][1] * Py_l + R[2][2] * Pz_l;
         Pz += h;
 
-        // Vector base->platform
         const float dx = Px - Bx;
         const float dy = Py - By;
         const float dz = Pz - Bz;
 
-        // ex: radial direction in base plane
-        // ey: tangential direction in base plane
-        // ez: vertical
         const float ex_x = ctb,  ex_y = stb;
         const float ey_x = -stb, ey_y = ctb;
 
@@ -136,35 +145,62 @@ void Kinematics3RRS::computeIK_(const PlatformSetpoint& sp) {
 
         const float Rxz = std::hypot(x, z);
         if (Rxz < 1e-6f) {
+            log_.warn("Kinematics3RRS: degenerate pose on leg " +
+                      std::to_string(i) + " for frame " + std::to_string(sp.frame_id) +
+                      " -> using last valid command");
             cmd.actuator_targets[idx] = last_valid_deg_[idx];
+            usedFallback = true;
             continue;
         }
 
         const float C = (x * x + yperp * yperp + z * z + L1 * L1 - L2 * L2) / (2.0f * L1);
-        float ratio = C / Rxz;
-        ratio = std::clamp(ratio, -1.0f, 1.0f);
+        const float ratio = C / Rxz;
+
+        // Do NOT silently clamp unreachable geometry into a fake valid solution.
+        if (!std::isfinite(ratio) || ratio < -1.0f || ratio > 1.0f) {
+            log_.warn("Kinematics3RRS: unreachable geometry on leg " +
+                      std::to_string(i) + " for frame " + std::to_string(sp.frame_id) +
+                      " (ratio=" + std::to_string(ratio) +
+                      ") -> using last valid command");
+            cmd.actuator_targets[idx] = last_valid_deg_[idx];
+            usedFallback = true;
+            continue;
+        }
 
         const float a     = std::acos(ratio);
         const float gamma = std::atan2(z, x);
 
-        // Candidates (ordering matches reference): gamma+a, gamma-a
         const float qA = gamma + a;
         const float qB = gamma - a;
 
-        // Choose closest to previous for continuity
         float q = chooseClosest(qA, qB, q_prev_[idx]);
 
-        // If horn points backwards along ex (cos(q) < 0), switch branch
         if (std::cos(q) < 0.0f) {
             q = otherBranch(qA, qB, q);
         }
 
+        if (!std::isfinite(q)) {
+            log_.warn("Kinematics3RRS: non-finite mechanism angle on leg " +
+                      std::to_string(i) + " for frame " + std::to_string(sp.frame_id) +
+                      " -> using last valid command");
+            cmd.actuator_targets[idx] = last_valid_deg_[idx];
+            usedFallback = true;
+            continue;
+        }
+
         q_prev_[idx] = q;
 
-        // Mechanism angle -> servo angle (degrees)
-        // servo = neutral + dir * q(deg)
         float servo_deg = cfg_.servo_neutral_deg[idx]
                         + static_cast<float>(cfg_.servo_dir[idx]) * rad2deg(q);
+
+        if (!std::isfinite(servo_deg)) {
+            log_.warn("Kinematics3RRS: non-finite servo mapping on leg " +
+                      std::to_string(i) + " for frame " + std::to_string(sp.frame_id) +
+                      " -> using last valid command");
+            cmd.actuator_targets[idx] = last_valid_deg_[idx];
+            usedFallback = true;
+            continue;
+        }
 
         servo_deg = std::clamp(servo_deg, 0.0f, 180.0f);
         servo_deg = static_cast<float>(std::lround(servo_deg));
@@ -173,9 +209,11 @@ void Kinematics3RRS::computeIK_(const PlatformSetpoint& sp) {
         cmd.actuator_targets[idx] = servo_deg;
     }
 
-    CommandCallback cb;
-    { std::lock_guard<std::mutex> lk(cbMtx_); cb = cmdCb_; }
-    if (cb) cb(cmd);
+    if (usedFallback) {
+        cmd.status = CommandStatus::KinematicsFallbackLastValid;
+    }
+
+    emitCommand_(cmd);
 }
 
-} // namespace solar
+} // namespace solar// final refinements

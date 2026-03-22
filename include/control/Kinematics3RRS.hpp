@@ -16,6 +16,12 @@ namespace solar {
  *  - input setpoint: pitch/roll (radians) via PlatformSetpoint
  *  - output command: servo degrees [0..180] in ActuatorCommand::actuator_targets
  *  - continuity via per-leg previous solution branch (q_prev_)
+ *
+ * Failure handling:
+ * - invalid static geometry config is surfaced via ActuatorCommand::status
+ * - per-leg degenerate / unreachable pose cases are surfaced via
+ *   ActuatorCommand::status rather than being silently hidden
+ * - last valid servo outputs are still available as a bounded fail-safe
  */
 class Kinematics3RRS {
 public:
@@ -47,6 +53,7 @@ public:
 
 private:
     void computeIK_(const PlatformSetpoint& sp);
+    void emitCommand_(const ActuatorCommand& cmd);
 
     // Continuity state (mechanism angles, radians)
     std::array<float, 3> q_prev_{0.f, 0.f, 0.f};
@@ -61,4 +68,4 @@ private:
     CommandCallback cmdCb_{};
 };
 
-} // namespace solar
+} // namespace solar// kinematics improvements
