@@ -1,125 +1,77 @@
-# Bill of Materials (BOM) | ÎïÁÏÇåµ¥
+# Bill of Materials (BOM) â€” Solar Stewart Tracker
 
-[English](#english) | [ÖÐÎÄ](#ÖÐÎÄ)
+## 1. Hardware Components
 
----
-
-## English
-
-### 3RRS Solar Stewart Tracker - Component List
-
-| Category | Component | Specifications | Qty | Key Function |
-|----------|-----------|----------------|-----|--------------|
-| **Computation** | Raspberry Pi 5 | 4GB RAM Version | 1 | Core brain running 50Hz real-time IK solver |
-| **Actuation** | Digital Servo | RDS3230 (30kg/Dual-axis) | 3 | High-torque actuators for 3RRS parallel platform |
-| **Driver** | PWM Driver Board | PCA9685 (16-Channel I2C) | 1 | Hardware PWM expansion to ensure real-time control |
-| **Vision** | Camera Module | IMX219 (120¡ã FOV/CSI) | 1 | Centroid extraction for active vision closed-loop |
-| **Power Supply** | DC Power Adapter | 6V 8A (Industrial Grade) | 1 | Prevents voltage sags during simultaneous high-torque movements |
-| **Rotary Joint** | Y-Clevis / I-Joint | SC Standard (M6/Rotary) | 3 sets | Intermediate revolute joint for 3RRS, ensuring precise single-DOF rotation |
-| **S-Joint Alt.** | Rod End Ball Joint (Fish-eye) | XUDZ SA6T/K (M6¡Á1.02 thread) | 3 | Intermediate revolute joint for 3RRS, ensuring precise single-DOF rotation |
-| **Fasteners** | SS Bolts & Nuts | M2, M3, M6 Assorted | N/A | High-strength assembly for overall structural reliability |
-| **Connectivity** | DC Jack & FPC Cable | 5.5mm Jack / 300mm FPC | 1 ea. | Reliable power input and high-speed data link for Pi 5 |
+| Item No. | Component | Specification / Model | Qty | Supplier | Unit Cost (Â£) | Total (Â£) | Notes |
+|----------|-----------|-----------------------|-----|----------|---------------|-----------|-------|
+| 1 | Raspberry Pi 5 | 8GB Model | 1 | Lab / Personal | 80.00 | 80.00 | Main controller |
+| 2 | IMX219 Camera | 8MP CSI Camera Module | 1 | Amazon | 25.00 | 25.00 | Vision input |
+| 3 | PCA9685 PWM Driver | 16-channel I2C PWM | 1 | Amazon | 12.00 | 12.00 | Servo control |
+| 4 | High-Torque Servo | RDS3230 or equivalent | 3 | Amazon | 15.00 | 45.00 | 3RRS actuators |
+| 5 | External Power Supply | 5â€“6V High Current | 1 | Amazon | 20.00 | 20.00 | Servo supply |
+| 6 | Breadboard & Wiring | Jumper wires, headers | 1 set | Lab | 10.00 | 10.00 | Prototyping |
+| 7 | Structural Frame | Acrylic / 3D Printed | 1 | Self-fabricated | 15.00 | 15.00 | Platform support |
+| 8 | Fasteners & Mounts | Screws, brackets | Assorted | Hardware Store | 10.00 | 10.00 | Mechanical assembly |
 
 ---
 
-## ÖÐÎÄ
+## 2. Software Dependencies
 
-### 3RRS Ì«ÑôÄÜ Stewart ×·×ÙÆ÷ - ×é¼þÇåµ¥
-
-| Àà±ð | ×é¼þÃû³Æ | ¹æ¸ñ/ÐÍºÅ | ÊýÁ¿ | ¹Ø¼üÓÃÍ¾ |
-|------|----------|-----------|------|----------|
-| **¼ÆËãµ¥Ôª** | Ê÷Ý®ÅÉ 5 | 4GB RAM °æ±¾ | 1 | ÏµÍ³´óÄÔ£¬ÔËÐÐ 50Hz ÊµÊ±ÄæÔË¶¯Ñ§½âËã |
-| **Ö´ÐÐ»ú¹¹** | Êý×Ö¶æ»ú | RDS3230 (30kg/Ë«Öá) | 3 | 3RRS Æ½Ì¨µÄ¶¯Á¦Ô´£¬Ìá¹©¸ß¸Õ¶È¶¯Ì¬Êä³ö |
-| **Çý¶¯Ä£¿é** | ¶æ»úÇý¶¯°å | PCA9685 (16Â·/I2C½Ó¿Ú) | 1 | Ó²¼þ¼¶ PWM À©Õ¹£¬±£ÕÏ¿ØÖÆÐÅºÅµÄÊµÊ±ÎÈ¶¨ÐÔ |
-| **ÊÓ¾õ¸ÐÖª** | ¸ßÇåÉãÏñÍ· | IMX219 (120¡ã¹ã½Ç/CSI) | 1 | ÊµÊ±²¶»ñ¹âÔ´ÖÊÐÄ£¬ÊµÏÖÖ÷¶¯ÊÓ¾õ±Õ»·×·×Ù |
-| **¹©µçÏµÍ³** | DC µçÔ´ÊÊÅäÆ÷ | 6V 8A (¹¤Òµ¼¶ÎÈÑ¹) | 1 | Îª¶æ»úÈºÌá¹©ÎÈ½¡µçÁ÷£¬Ïû³ý¸ßÆµ¶¯×÷ÏÂµÄµçÑ¹µøÂä |
-| **×ª¶¯¸±** | YÐÍ/IÐÍ½ÓÍ·È«Ì× | SC±ê×¼¼þ (M6/¹Ì¶¨Ðý×ª) | 3Ì× | ×÷Îª 3RRS »ú¹¹µÄÖÐ¼ä×ª¶¯¹Ø½Ú£¬È·±£¾«È·µÄµ¥×ÔÓÉ¶ÈÐý×ª |
-| **S¹Ø½ÚÌæ´ú** | ÓãÑÛ¹Ø½Ú | XUDZ SA6T/K (M6¡Á1.02Ë¿) | 3 | ×÷Îª 3RRS »ú¹¹µÄÖÐ¼ä×ª¶¯¹Ø½Ú£¬È·±£¾«È·µÄµ¥×ÔÓÉ¶ÈÐý×ª |
-| **½ô¹ÌÓ²¼þ** | ²»Ðâ¸ÖÂÝË¿/ÂÝÄ¸ | M2, M3, M6 (¶àÖÖ¹æ¸ñ) | Èô¸É | È«ÏµÍ³¸ßÇ¿¶È»úÐµ×é×°£¬È·±£³Ö¾Ã½á¹¹ÎÈ¶¨ÐÔ |
-| **½Ó¿ÚÏß²Ä** | DC×ª½Ó/FPCÏß | 5.5mm Ä¸Í· / 300mm ÅÅÏß | ¸÷ 1 | ½â¾öµçÔ´ÒýÈëÓëÊ÷Ý®ÅÉ 5 µÄ³¤¾àÀëÊÓ¾õ´«Êä |
-
----
-### Product Images | ÉÌÆ·Í¼
-
-#### Actuation | Ö´ÐÐ»ú¹¹
-
-![Digital Servo](../datasheets/component/digital_servo_rds3230.png)
-
-- `RDS3230 30kg` dual-axis digital servo, used as the three primary actuators of the 3RRS platform.
-
-#### Driver | Çý¶¯Ä£¿é
-
-![PCA9685 PWM Driver Board](../datasheets/component/pca9685_pwm_driver_board.png)
-
-- `PCA9685A` 16-channel `PWM` servo driver board, connected to the main controller via `I2C` to provide stable multi-channel servo control signals.
-
-#### Vision | ÊÓ¾õ¸ÐÖª
-
-![IMX219 Camera Module](../datasheets/component/imx219_pi5_camera.png)
-
-- `IMX219` Raspberry Pi `Pi 5` camera module with `CSI/MIPI` interface and `120-degree` wide-angle lens, used for light-source target tracking.
-
-#### Power Supply | ¹©µçÏµÍ³
-
-![6V 8A Power Adapter](../datasheets/component/power_adapter_6v8a.png)
-
-- `6V 8A` DC power adapter, used as the main servo-side power supply to maintain voltage stability during simultaneous multi-servo motion.
-
-#### Rotary Joint | ×ª¶¯¸±
-
-![Rotary Joint Set](../datasheets/component/rotary_joint_y_sc_set.png)
-
-- `Y-type joint` and `SC standard connector` set (`M6x1`), used as the intermediate rotary joint assembly of the 3RRS mechanism.
-
-#### S-Joint Alternative | S¹Ø½ÚÌæ´ú
-
-![Rod End Ball Joint](../datasheets/component/rod_end_ball_joint_sa6tk.png)
-
-- `XUDZ SA6T/K` rod end ball joint, used as an alternative intermediate joint solution to maintain accurate single-DOF rotation.
-
-#### Fasteners | ½ô¹ÌÓ²¼þ
-
-![M2 Fasteners](../datasheets/component/m2x20_pan_screw.png)
-
-- `M2x20` cross-head pan screw, used for small attachments and local structural fastening.
-
-![M3 Nuts](../datasheets/component/m3_hex_nut.png)
-
-- `M3` stainless steel hex nut, used for servo brackets, connection plates, and thin-plate structural locking.
-
-![M3 Threaded Rod](../datasheets/component/m3x30_threaded_rod.png)
-
-- `M3x30` fastener, used for light-load connections, link-end installation, and local leveling adjustment.
-
-![M3 Flat Head Screw](../datasheets/component/m3x25_flat_head_screw.png)
-
-- `M3x25` flat-head / countersunk screw, used where a flush mounting surface is required.
-
-![M6 Threaded Rod](../datasheets/component/m6x30_threaded_rod.png)
-
-- `M6x30` stainless steel fully threaded rod, suitable for load-bearing connections and larger-structure adjustment.
-
-![M6 Double-End Rod](../datasheets/component/m6x35_double_end_rod.png)
-
-- `M6x35` double-end threaded rod / extended stud, used for connector joining and installation-length fine adjustment.
-
-#### Connectivity | ½Ó¿ÚÏß²Ä
-
-![FPC Cable](../datasheets/component/fpc_cable_pi5.png)
-
-- Raspberry Pi `Pi 5` `CSI/DSI FPC` flex cable, used for high-speed signal connection between the camera and the main controller.
-
-![DC Adapter Plug](../datasheets/component/dc_power_adapter_plug_5_5x2_5mm.png)
-
-- `5.5x2.5mm` `DC` power adapter plug / jack, used for external power input and cable conversion.
+| Software | Purpose | Cost |
+|----------|----------|------|
+| C++17 | Core implementation | Free |
+| CMake | Build system | Free |
+| OpenCV | Vision processing | Free |
+| libcamera | Camera backend (Pi) | Free |
+| GitHub | Version control | Free |
 
 ---
 
-### Notes | ±¸×¢
+## 3. Cost Summary
 
-- All quantities are for one complete 3RRS unit.
-- ËùÓÐÊýÁ¿¾ùÎªÒ»Ì×ÍêÕû 3RRS µ¥ÔªËùÐè¡£
-- Fastener quantities may vary based on assembly design.
-- ½ô¹Ì¼þÊýÁ¿¿ÉÄÜ¸ù¾Ý×°ÅäÉè¼ÆÓÐËù±ä»¯¡£
+| Category | Cost (Â£) |
+|----------|----------|
+| Electronics | 182.00 |
+| Mechanical | 25.00 |
+| Miscellaneous | 10.00 |
+| **Total Hardware Cost** | **Â£217.00** |
 
+---
 
+## 4. Budget Assessment
+
+- Total estimated cost: **Â£217.00**
+- Within expected student project budget: **Yes**
+- Major cost drivers:
+  - Raspberry Pi
+  - High-torque servos
+  - Camera module
+
+---
+
+## 5. Design Considerations
+
+- External servo power supply used to prevent brownout.
+- PWM driver isolates timing from Raspberry Pi CPU.
+- Capacity=1 queue architecture prevents actuator backlog.
+- Modular design allows hardware substitution without software redesign.
+
+---
+
+## 6. Traceability to Architecture
+
+| Subsystem | Hardware Used |
+|-----------|--------------|
+| Vision (T1/T2) | IMX219 Camera |
+| Control (T2) | Raspberry Pi 5 |
+| Actuation (T3) | PCA9685 + Servos |
+| Safety Layer | ActuatorManager (software) |
+| Logging | Console / File logger |
+
+---
+
+## 7. Reproducibility Notes
+
+All components are commercially available.
+Part numbers and specifications allow replication of the system.
+Mechanical components can be 3D printed using standard PLA.

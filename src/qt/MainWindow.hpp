@@ -27,7 +27,7 @@
 #include <QtCharts/QValueAxis>
 
 // Types used in UI callbacks / overlays.
-#include "common/Types.hpp"   // FrameEvent / SunEstimate / PlatformSetpoint / ActuatorCommand
+#include "common/Types.hpp"
 #include "system/SystemManager.hpp"
 
 namespace solar {
@@ -92,12 +92,15 @@ private:
     std::condition_variable convCv_;
     bool convHasFrame_{false};
 
-    // latest packed frame from system (Y / RGB / YUV420p)
+    // Latest frame copied from the system callback.
+    // The public FrameEvent contract now uses explicit format + stride.
     std::shared_ptr<std::vector<uint8_t>> latestBuf_;
     int latestW_{0};
     int latestH_{0};
+    int latestStride_{0};
+    PixelFormat latestFormat_{PixelFormat::Gray8};
 
-    // latest converted RGB image (overlay added in UI thread)
+    // Latest converted image for display.
     std::mutex imgMutex_;
     QImage latestImg_;
     std::atomic<bool> imgReady_{false};

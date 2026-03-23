@@ -1,21 +1,72 @@
-# SolidWorks temporary files
-~$*.SLDPRT
-~$*.SLDASM
-~$*.SLDDRW
+# =========================
+# Build directories
+# =========================
+build/
+cmake-build-*/
+out/
+CMakeFiles/
+Testing/
 
-# SolidWorks backup files
-*.SLDPRT.bak
-*.SLDASM.bak
-*.SLDDRW.bak
+# =========================
+# CMake generated files
+# =========================
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+CTestTestfile.cmake
 
-# SolidWorks lock files
-*.SLDPRT.lock
-*.SLDASM.lock
-*.SLDDRW.lock
+# =========================
+# Compiled objects & binaries
+# =========================
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.a
+*.lib
+*.pdb
 
-# Windows system files
-Thumbs.db
-Desktop.ini
+# =========================
+# Logs
+# =========================
+*.log
 
-# macOS system files
+# =========================
+# Visual Studio / VSCode
+# =========================
+.vs/
+.vscode/
+*.user
+*.suo
+
+# =========================
+# Doxygen generated output
+# =========================
+docs/doxygen/html/
+docs/doxygen/latex/
+docs/doxygen/xml/
+
+!docs/doxygen/Doxyfile
+
+# =========================
+# Coverage
+# =========================
+coverage/
+*.gcda
+*.gcno
+*.gcov
+
+# =========================
+# Temporary / editor files
+# =========================
+*.tmp
+*.bak
+*.swp
+*.cache
+
+# =========================
+# OS files
+# =========================
 .DS_Store
+Thumbs.db
