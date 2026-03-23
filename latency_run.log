@@ -1,0 +1,119 @@
+QStandardPaths: wrong permissions on runtime directory /run/user/1000, 0770 instead of 0700
+[8479235ms] INFO: Using LibcameraPublisher (Pi Camera)
+[8479235ms] INFO: STATE -> STARTUP
+[8479235ms] INFO: ServoDriver: start requested with policy=RequireHardware
+[8479236ms] INFO: ServoDriver: real hardware output active on /dev/i2c-1 at 0x40
+[8479236ms] INFO: ServoDriver started in mode=Hardware
+[8479236ms] INFO: LibcameraPublisher started
+[8479236ms] INFO: STATE -> NEUTRAL
+[8479236ms] INFO: STATE -> SEARCHING
+[8479236ms] INFO: SystemManager started
+[8479236ms] INFO: LibcameraPublisher: libcamera thread starting
+[2:21:19.237264649] [4487]  INFO Camera camera_manager.cpp:340 libcamera v0.7.0+rpt20260205
+[2:21:19.257497778] [4488]  INFO RPI pisp.cpp:720 libpisp version 1.3.0
+[2:21:19.297631000] [4488]  INFO IPAProxy ipa_proxy.cpp:180 Using tuning file /usr/share/libcamera/ipa/rpi/pisp/imx219.json
+[2:21:19.307815686] [4488]  INFO Camera camera_manager.cpp:223 Adding camera '/base/axi/pcie@1000120000/rp1/i2c@80000/imx219@10' for pipeline handler rpi/pisp
+[2:21:19.307841926] [4488]  INFO RPI pisp.cpp:1181 Registered camera /base/axi/pcie@1000120000/rp1/i2c@80000/imx219@10 to CFE device /dev/media2 and ISP device /dev/media0 using PiSP variant BCM2712_C0
+[2:21:19.308274112] [4487]  INFO Camera camera.cpp:1215 configuring streams: (0) 640x480-YUV420/sYCC
+[2:21:19.308426315] [4488]  INFO RPI pisp.cpp:1485 Sensor: /base/axi/pcie@1000120000/rp1/i2c@80000/imx219@10 - Selected sensor format: 640x480-SBGGR10_1X10/RAW - Selected CFE format: 640x480-PC1B/RAW
+[8479358ms] INFO: LibcameraPublisher: streaming started
+[8479504ms] INFO: STATE -> TRACKING
+[8479639ms] INFO: ServoDriver apply (deg->us): [36.000000 -> 900.000000, 49.000000 -> 1044.444458, 23.000000 -> 755.555542] (mode=Hardware)
+[8479972ms] INFO: ServoDriver apply (deg->us): [36.000000 -> 900.000000, 49.000000 -> 1044.444458, 23.000000 -> 755.555542] (mode=Hardware)
+[8480304ms] INFO: ServoDriver apply (deg->us): [36.000000 -> 900.000000, 49.000000 -> 1044.444458, 23.000000 -> 755.555542] (mode=Hardware)
+[8480640ms] INFO: ServoDriver apply (deg->us): [36.000000 -> 900.000000, 49.000000 -> 1044.444458, 23.000000 -> 755.555542] (mode=Hardware)
+[8480970ms] INFO: ServoDriver apply (deg->us): [50.000000 -> 1055.555542, 40.000000 -> 944.444458, 23.000000 -> 755.555542] (mode=Hardware)
+[8481237ms] INFO: STATE -> SEARCHING
+[8481304ms] INFO: ServoDriver apply (deg->us): [41.000000 -> 955.555542, 41.000000 -> 955.555542, 41.000000 -> 955.555542] (mode=Hardware)
+[8481506ms] INFO: STATE -> TRACKING
+[8481637ms] INFO: ServoDriver apply (deg->us): [36.000000 -> 900.000000, 49.000000 -> 1044.444458, 23.000000 -> 755.555542] (mode=Hardware)
+[8481970ms] INFO: ServoDriver apply (deg->us): [36.000000 -> 900.000000, 49.000000 -> 1044.444458, 23.000000 -> 755.555542] (mode=Hardware)
+[8482304ms] INFO: ServoDriver apply (deg->us): [36.000000 -> 900.000000, 49.000000 -> 1044.444458, 23.000000 -> 755.555542] (mode=Hardware)
+[8482638ms] INFO: ServoDriver apply (deg->us): [36.000000 -> 900.000000, 49.000000 -> 1044.444458, 23.000000 -> 755.555542] (mode=Hardware)
+[8482970ms] INFO: ServoDriver apply (deg->us): [36.000000 -> 900.000000, 49.000000 -> 1044.444458, 23.000000 -> 755.555542] (mode=Hardware)
+[8483305ms] INFO: ServoDriver apply (deg->us): [36.000000 -> 900.000000, 49.000000 -> 1044.444458, 23.000000 -> 755.555542] (mode=Hardware)
+[8483636ms] INFO: ServoDriver apply (deg->us): [36.000000 -> 900.000000, 49.000000 -> 1044.444458, 23.000000 -> 755.555542] (mode=Hardware)
+[8483973ms] INFO: ServoDriver apply (deg->us): [49.000000 -> 1044.444458, 36.000000 -> 900.000000, 23.000000 -> 755.555542] (mode=Hardware)
+[8484304ms] INFO: ServoDriver apply (deg->us): [49.000000 -> 1044.444458, 36.000000 -> 900.000000, 23.000000 -> 755.555542] (mode=Hardware)
+[8484638ms] INFO: ServoDriver apply (deg->us): [45.000000 -> 1000.000000, 29.000000 -> 822.222229, 46.000000 -> 1011.111145] (mode=Hardware)
+[8484970ms] INFO: ServoDriver apply (deg->us): [45.000000 -> 1000.000000, 13.000000 -> 644.444458, 50.000000 -> 1055.555542] (mode=Hardware)
+[8485304ms] INFO: ServoDriver apply (deg->us): [45.000000 -> 1000.000000, 13.000000 -> 644.444458, 50.000000 -> 1055.555542] (mode=Hardware)
+[8485636ms] INFO: ServoDriver apply (deg->us): [46.000000 -> 1011.111145, 15.000000 -> 666.666687, 49.000000 -> 1044.444458] (mode=Hardware)
+[8485969ms] INFO: ServoDriver apply (deg->us): [44.000000 -> 988.888916, 15.000000 -> 666.666687, 50.000000 -> 1055.555542] (mode=Hardware)
+[8486305ms] INFO: ServoDriver apply (deg->us): [36.000000 -> 900.000000, 30.000000 -> 833.333313, 50.000000 -> 1055.555542] (mode=Hardware)
+[8486636ms] INFO: ServoDriver apply (deg->us): [13.000000 -> 644.444458, 45.000000 -> 1000.000000, 50.000000 -> 1055.555542] (mode=Hardware)
+[8486969ms] INFO: ServoDriver apply (deg->us): [21.000000 -> 733.333313, 42.000000 -> 966.666687, 50.000000 -> 1055.555542] (mode=Hardware)
+[8487305ms] INFO: ServoDriver apply (deg->us): [41.000000 -> 955.555542, 23.000000 -> 755.555542, 50.000000 -> 1055.555542] (mode=Hardware)
+[8487636ms] INFO: ServoDriver apply (deg->us): [45.000000 -> 1000.000000, 14.000000 -> 655.555542, 50.000000 -> 1055.555542] (mode=Hardware)
+[8487971ms] INFO: ServoDriver apply (deg->us): [48.000000 -> 1033.333374, 34.000000 -> 877.777771, 39.000000 -> 933.333313] (mode=Hardware)
+[8488302ms] INFO: ServoDriver apply (deg->us): [40.000000 -> 944.444458, 49.000000 -> 1044.444458, 28.000000 -> 811.111145] (mode=Hardware)
+[8488636ms] INFO: ServoDriver apply (deg->us): [41.000000 -> 955.555542, 48.000000 -> 1033.333374, 30.000000 -> 833.333313] (mode=Hardware)
+[8488970ms] INFO: ServoDriver apply (deg->us): [50.000000 -> 1055.555542, 28.000000 -> 811.111145, 39.000000 -> 933.333313] (mode=Hardware)
+[8489302ms] INFO: ServoDriver apply (deg->us): [49.000000 -> 1044.444458, 25.000000 -> 777.777771, 43.000000 -> 977.777771] (mode=Hardware)
+[8489637ms] INFO: ServoDriver apply (deg->us): [48.000000 -> 1033.333374, 21.000000 -> 733.333313, 46.000000 -> 1011.111145] (mode=Hardware)
+[8489969ms] INFO: ServoDriver apply (deg->us): [45.000000 -> 1000.000000, 13.000000 -> 644.444458, 50.000000 -> 1055.555542] (mode=Hardware)
+[8490303ms] INFO: ServoDriver apply (deg->us): [45.000000 -> 1000.000000, 13.000000 -> 644.444458, 50.000000 -> 1055.555542] (mode=Hardware)
+[8490636ms] INFO: ServoDriver apply (deg->us): [42.000000 -> 966.666687, 20.000000 -> 722.222229, 50.000000 -> 1055.555542] (mode=Hardware)
+[8490968ms] INFO: ServoDriver apply (deg->us): [21.000000 -> 733.333313, 42.000000 -> 966.666687, 50.000000 -> 1055.555542] (mode=Hardware)
+[8491303ms] INFO: ServoDriver apply (deg->us): [13.000000 -> 644.444458, 45.000000 -> 1000.000000, 50.000000 -> 1055.555542] (mode=Hardware)
+[8491635ms] INFO: ServoDriver apply (deg->us): [13.000000 -> 644.444458, 45.000000 -> 1000.000000, 50.000000 -> 1055.555542] (mode=Hardware)
+[8491971ms] INFO: ServoDriver apply (deg->us): [31.000000 -> 844.444458, 36.000000 -> 900.000000, 50.000000 -> 1055.555542] (mode=Hardware)
+[8492302ms] INFO: ServoDriver apply (deg->us): [45.000000 -> 1000.000000, 13.000000 -> 644.444458, 50.000000 -> 1055.555542] (mode=Hardware)
+[8492635ms] INFO: ServoDriver apply (deg->us): [45.000000 -> 1000.000000, 13.000000 -> 644.444458, 50.000000 -> 1055.555542] (mode=Hardware)
+[8492968ms] INFO: ServoDriver apply (deg->us): [45.000000 -> 1000.000000, 13.000000 -> 644.444458, 50.000000 -> 1055.555542] (mode=Hardware)
+[8493301ms] INFO: ServoDriver apply (deg->us): [45.000000 -> 1000.000000, 13.000000 -> 644.444458, 50.000000 -> 1055.555542] (mode=Hardware)
+[8493638ms] INFO: ServoDriver apply (deg->us): [20.000000 -> 722.222229, 42.000000 -> 966.666687, 50.000000 -> 1055.555542] (mode=Hardware)
+[8493968ms] INFO: ServoDriver apply (deg->us): [31.000000 -> 844.444458, 41.000000 -> 955.555542, 48.000000 -> 1033.333374] (mode=Hardware)
+[8494304ms] INFO: ServoDriver apply (deg->us): [45.000000 -> 1000.000000, 15.000000 -> 666.666687, 50.000000 -> 1055.555542] (mode=Hardware)
+[8494635ms] INFO: ServoDriver apply (deg->us): [45.000000 -> 1000.000000, 13.000000 -> 644.444458, 50.000000 -> 1055.555542] (mode=Hardware)
+[8494967ms] INFO: ServoDriver apply (deg->us): [47.000000 -> 1022.222229, 36.000000 -> 900.000000, 40.000000 -> 944.444458] (mode=Hardware)
+[8495302ms] INFO: ServoDriver apply (deg->us): [44.000000 -> 988.888916, 16.000000 -> 677.777771, 50.000000 -> 1055.555542] (mode=Hardware)
+[8495634ms] INFO: ServoDriver apply (deg->us): [16.000000 -> 677.777771, 44.000000 -> 988.888916, 50.000000 -> 1055.555542] (mode=Hardware)
+[8495971ms] INFO: ServoDriver apply (deg->us): [34.000000 -> 877.777771, 50.000000 -> 1055.555542, 29.000000 -> 822.222229] (mode=Hardware)
+[8496304ms] INFO: ServoDriver apply (deg->us): [49.000000 -> 1044.444458, 36.000000 -> 900.000000, 23.000000 -> 755.555542] (mode=Hardware)
+[8496635ms] INFO: ServoDriver apply (deg->us): [50.000000 -> 1055.555542, 32.000000 -> 855.555542, 33.000000 -> 866.666687] (mode=Hardware)
+[8496967ms] INFO: ServoDriver apply (deg->us): [48.000000 -> 1033.333374, 21.000000 -> 733.333313, 46.000000 -> 1011.111145] (mode=Hardware)
+[8497301ms] INFO: ServoDriver apply (deg->us): [45.000000 -> 1000.000000, 13.000000 -> 644.444458, 50.000000 -> 1055.555542] (mode=Hardware)
+[8497635ms] INFO: ServoDriver apply (deg->us): [27.000000 -> 800.000000, 38.000000 -> 922.222229, 50.000000 -> 1055.555542] (mode=Hardware)
+[8497967ms] INFO: ServoDriver apply (deg->us): [25.000000 -> 777.777771, 49.000000 -> 1044.444458, 43.000000 -> 977.777771] (mode=Hardware)
+[8498303ms] INFO: ServoDriver apply (deg->us): [35.000000 -> 888.888916, 50.000000 -> 1055.555542, 25.000000 -> 777.777771] (mode=Hardware)
+[8498634ms] INFO: ServoDriver apply (deg->us): [47.000000 -> 1022.222229, 35.000000 -> 888.888916, 40.000000 -> 944.444458] (mode=Hardware)
+[8498967ms] INFO: ServoDriver apply (deg->us): [41.000000 -> 955.555542, 47.000000 -> 1022.222229, 34.000000 -> 877.777771] (mode=Hardware)
+[8499301ms] INFO: ServoDriver apply (deg->us): [35.000000 -> 888.888916, 50.000000 -> 1055.555542, 34.000000 -> 877.777771] (mode=Hardware)
+[8499633ms] INFO: ServoDriver apply (deg->us): [15.000000 -> 666.666687, 46.000000 -> 1011.111145, 50.000000 -> 1055.555542] (mode=Hardware)
+[8499968ms] INFO: ServoDriver apply (deg->us): [26.000000 -> 788.888916, 45.000000 -> 1000.000000, 48.000000 -> 1033.333374] (mode=Hardware)
+[8500300ms] INFO: ServoDriver apply (deg->us): [48.000000 -> 1033.333374, 28.000000 -> 811.111145, 43.000000 -> 977.777771] (mode=Hardware)
+[8500634ms] INFO: ServoDriver apply (deg->us): [45.000000 -> 1000.000000, 13.000000 -> 644.444458, 50.000000 -> 1055.555542] (mode=Hardware)
+[8500966ms] INFO: ServoDriver apply (deg->us): [35.000000 -> 888.888916, 32.000000 -> 855.555542, 50.000000 -> 1055.555542] (mode=Hardware)
+[8501300ms] INFO: ServoDriver apply (deg->us): [20.000000 -> 722.222229, 47.000000 -> 1022.222229, 48.000000 -> 1033.333374] (mode=Hardware)
+[8501634ms] INFO: ServoDriver apply (deg->us): [40.000000 -> 944.444458, 33.000000 -> 866.666687, 48.000000 -> 1033.333374] (mode=Hardware)
+[8501966ms] INFO: ServoDriver apply (deg->us): [47.000000 -> 1022.222229, 40.000000 -> 944.444458, 35.000000 -> 888.888916] (mode=Hardware)
+[8502301ms] INFO: ServoDriver apply (deg->us): [42.000000 -> 966.666687, 49.000000 -> 1044.444458, 29.000000 -> 822.222229] (mode=Hardware)
+[8502633ms] INFO: ServoDriver apply (deg->us): [44.000000 -> 988.888916, 45.000000 -> 1000.000000, 33.000000 -> 866.666687] (mode=Hardware)
+[8502966ms] INFO: ServoDriver apply (deg->us): [49.000000 -> 1044.444458, 40.000000 -> 944.444458, 31.000000 -> 844.444458] (mode=Hardware)
+[8503301ms] INFO: ServoDriver apply (deg->us): [42.000000 -> 966.666687, 44.000000 -> 988.888916, 38.000000 -> 922.222229] (mode=Hardware)
+[8503633ms] INFO: ServoDriver apply (deg->us): [34.000000 -> 877.777771, 43.000000 -> 977.777771, 46.000000 -> 1011.111145] (mode=Hardware)
+[8503966ms] INFO: ServoDriver apply (deg->us): [45.000000 -> 1000.000000, 38.000000 -> 922.222229, 40.000000 -> 944.444458] (mode=Hardware)
+[8504300ms] INFO: ServoDriver apply (deg->us): [48.000000 -> 1033.333374, 38.000000 -> 922.222229, 35.000000 -> 888.888916] (mode=Hardware)
+[8504632ms] INFO: ServoDriver apply (deg->us): [31.000000 -> 844.444458, 46.000000 -> 1011.111145, 44.000000 -> 988.888916] (mode=Hardware)
+[8504967ms] INFO: ServoDriver apply (deg->us): [49.000000 -> 1044.444458, 35.000000 -> 888.888916, 37.000000 -> 911.111145] (mode=Hardware)
+[8505299ms] INFO: ServoDriver apply (deg->us): [38.000000 -> 922.222229, 49.000000 -> 1044.444458, 31.000000 -> 844.444458] (mode=Hardware)
+[8505637ms] INFO: ServoDriver apply (deg->us): [43.000000 -> 977.777771, 45.000000 -> 1000.000000, 34.000000 -> 877.777771] (mode=Hardware)
+[8505965ms] INFO: ServoDriver apply (deg->us): [39.000000 -> 933.333313, 48.000000 -> 1033.333374, 33.000000 -> 866.666687] (mode=Hardware)
+[8506302ms] INFO: ServoDriver apply (deg->us): [41.000000 -> 955.555542, 49.000000 -> 1044.444458, 25.000000 -> 777.777771] (mode=Hardware)
+[8506633ms] INFO: ServoDriver apply (deg->us): [50.000000 -> 1055.555542, 41.000000 -> 955.555542, 23.000000 -> 755.555542] (mode=Hardware)
+[8506965ms] INFO: ServoDriver apply (deg->us): [45.000000 -> 1000.000000, 44.000000 -> 988.888916, 34.000000 -> 877.777771] (mode=Hardware)
+[8506986ms] INFO: STATE -> STOPPING
+[2:21:46.991889651] [4488] ERROR DeviceEnumerator device_enumerator.cpp:209 Removing media device /dev/media2 while still in use
+[2:21:46.991913262] [4488] ERROR DeviceEnumerator device_enumerator.cpp:209 Removing media device /dev/media0 while still in use
+[8506991ms] INFO: LibcameraPublisher: libcamera thread exiting
+[8506992ms] INFO: LibcameraPublisher stopped
+[8506993ms] INFO: ServoDriver stopped from mode=Hardware
+[8506993ms] INFO: ---- Latency Summary ----
+[8506993ms] INFO: Frames: 829
+[8506993ms] INFO: Total   avg(ms)=1.107898 min=0.699481 max=5.336241 jitter=4.636760
+[8506993ms] INFO: Vision  avg(ms)=1.053334 min=0.679000 max=5.313796
+[8506993ms] INFO: Control avg(ms)=0.004478 min=0.001574 max=0.941574
+[8506993ms] INFO: Actuate avg(ms)=0.050085 min=0.011667 max=3.249611
+[8506993ms] INFO: STATE -> IDLE
+[8506993ms] INFO: SystemManager stopped
