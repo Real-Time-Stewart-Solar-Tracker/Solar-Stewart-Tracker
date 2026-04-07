@@ -41,7 +41,6 @@
 ## 4. Budget Assessment
 
 - Total estimated cost: **£217.00**
-- Within expected student project budget: **Yes**
 - Major cost drivers:
   - Raspberry Pi
   - High-torque servos
@@ -53,7 +52,6 @@
 
 - External servo power supply used to prevent brownout.
 - PWM driver isolates timing from Raspberry Pi CPU.
-- Capacity=1 queue architecture prevents actuator backlog.
 - Modular design allows hardware substitution without software redesign.
 
 ---

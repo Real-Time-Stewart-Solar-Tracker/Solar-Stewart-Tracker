@@ -1,540 +1,621 @@
-# SOLID Justification (Design Rationale)
+# SOLID Justification
 
-This document explains how SOLID principles were applied intentionally in the Solar Stewart Tracker project. The aim is not to force textbook patterns everywhere, but to use SOLID where it gives clear engineering value for this specific system: hardware separation, testability, maintainability, and safe event-driven real-time behaviour.
+This document describes the class structure of the solar-tracking system and explains how the main class boundaries support realtime behaviour, hardware isolation, testability, and maintenance.
 
-## Why SOLID matters in this project
+The core runtime pipeline is:
 
-This project is not a single algorithm. It combines:
+**ICamera → SunTracker → Controller → ManualImuCoordinator → Kinematics3RRS → ActuatorManager → ServoDriver**
 
-- hardware-dependent camera and actuator interfaces
-- event-driven thread coordination
-- image-processing logic
-- control logic
-- kinematics
-- safety shaping
-- platform-specific Linux code
-- software-only test and simulation paths
+`SystemManager` orchestrates that pipeline at runtime. `BackendCoordinator` owns optional hardware backend lifecycle. `GuiManualDispatcher` provides the dedicated event-driven thread for GUI manual mode. `SystemFactory` assembles the runtime graph. `LinuxEventLoop` and the Qt GUI provide application-level control around the processing core.
 
-Without clear boundaries, these concerns would quickly collapse into a tightly coupled design that is hard to test, hard to port, and hard to defend academically.
-
-In this project, SOLID is useful because it helps achieve the following:
-
-- keep hardware-specific code isolated
-- keep pure logic testable without physical hardware
-- allow simulation and hardware paths to share the same higher-level pipeline
-- prevent one module from becoming a “god class”
-- make safety logic explicit instead of buried inside unrelated classes
-- keep the architecture aligned with an event-driven callback-based design
-
-The system boundary is:
-
-**Camera (`ICamera`) → SunTracker → Controller → Kinematics3RRS → ActuatorManager → ServoDriver**
-
-`SystemManager` wires these modules together and manages lifecycle and worker threads.
+The system is intentionally structured as a staged pipeline rather than a single tracker class. That separation keeps acquisition, estimation, control, policy coordination, mechanism mapping, safety conditioning, hardware output, and application control distinct. For this system, that improves traceability, simplifies testing, and reduces the risk of mixing timing-sensitive logic with platform-specific code.
 
 ---
 
-## `ICamera` (interface)
+## Design context
 
-### Why SOLID is the right choice here
+The class structure is shaped by four practical requirements.
 
-The camera is one of the clearest places where SOLID is the best design choice in this project.
+First, hardware-facing code must remain isolated from pure logic. Camera backends, I2C access, GPIO-backed manual input, IMU publishing, and PWM output are platform-specific concerns. Vision, control, mapping, and kinematics should not depend directly on those details.
 
-The rest of the system should care only about this question:
+Second, the runtime must preserve an event-driven flow. Sensor and backend events enter the pipeline, are transformed by dedicated stages, and progress toward output through typed interfaces. Clear stage boundaries make that flow explicit.
 
-**“Can I receive frames?”**
+Third, the system must support development and testing without requiring the full physical platform at all times. Narrow interfaces and focused classes allow software-only tests, simulated inputs, and hardware-smoke checks to coexist.
 
-It should not care whether frames come from:
-
-- libcamera on Raspberry Pi
-- a simulated source
-- a future USB or file-backed source
-
-If higher-level code depended directly on libcamera, then:
-
-- testing would require hardware or Linux-specific stubs
-- Windows/software-only development would become harder
-- camera-specific details would leak upward into orchestration logic
-
-So in this case, using an interface is not an academic exercise. It is the most practical way to keep the full pipeline reusable and testable.
-
-### Why it exists (SRP)
-
-Defines a minimal contract for “a source of `FrameEvent`”, independent of hardware.
-
-### Depends on (DIP)
-
-Higher-level code depends on the abstraction `ICamera`, not on a concrete backend.
-
-### Does NOT do
-
-- no libcamera calls
-- no frame processing
-- no control logic
-- no global thread/orchestration policy
-
-### SOLID highlights
-
-- **SRP:** one responsibility — provide camera-like frame delivery contract
-- **ISP:** small interface with only essential operations
-- **DIP:** higher-level code depends on the camera abstraction, not Linux camera APIs
-
-### Why this is the best choice here
-
-Because this project must support both:
-
-- real camera operation on Linux
-- software-only or simulated execution for testing and development
-
-That requirement makes an abstraction boundary at the camera input not just desirable, but necessary.
+Fourth, the runtime must remain maintainable as policies, backends, and hardware details change. Each class therefore has a narrow responsibility and an explicit role in the overall data path.
 
 ---
 
-## `LibcameraPublisher` (`ICamera` implementation)
+## `ICamera`
 
-### Why SOLID is the right choice here
+### Purpose
 
-libcamera is Linux-specific and platform-specific. That makes it exactly the kind of dependency that should be isolated.
+`ICamera` defines the contract for frame-producing backends.
 
-If libcamera code were spread across `SystemManager`, `SunTracker`, or application setup logic, then:
+The rest of the runtime does not need to know whether frames come from a Raspberry Pi camera backend or a software simulator. It only needs a typed frame source with a callback registration mechanism.
 
-- the codebase would be less portable
-- build logic would be harder to manage
-- platform-specific failures would affect unrelated modules
-- testing would become much more difficult
+### SOLID role
 
-So in this project, putting libcamera inside one dedicated implementation is the cleanest and safest design.
+**Single Responsibility Principle**
 
-### Why it exists (SRP)
+`ICamera` defines one architectural contract: frame delivery. It does not acquire frames itself, perform tracking, or manage control behaviour.
 
-Implements camera acquisition using libcamera and emits `FrameEvent` via callback.
+**Interface Segregation Principle**
 
-### Depends on (DIP)
+The interface remains narrow. Camera consumers depend only on frame-source operations and do not need backend-specific configuration or display logic.
 
-Depends on libcamera internally, but presents only the `ICamera` contract to the rest of the system.
+**Dependency Inversion Principle**
 
-### Does NOT do
+Higher-level runtime code depends on `ICamera`, not on concrete camera implementations. That keeps backend choice separate from pipeline logic.
 
-- no sun detection
-- no control law
-- no kinematics
-- no actuation logic
+### Boundary value
 
-### SOLID highlights
-
-- **SRP:** only camera acquisition and delivery
-- **LSP:** can substitute for any other valid `ICamera` implementation
-- **DIP:** libcamera dependency is contained inside the hardware-facing boundary
-
-### Why this is the best choice here
-
-Because libcamera is exactly the sort of volatile, platform-specific dependency that should not contaminate the rest of the pipeline.
+This boundary prevents camera backend details from leaking into orchestration, vision, or control code. It also allows different frame sources to use the same downstream processing path.
 
 ---
 
-## `SimulatedPublisher` (`ICamera` implementation)
+## `LibcameraPublisher`
 
-### Why SOLID is the right choice here
+### Purpose
 
-Simulation is essential in this project because hardware is not always available, and much of the pipeline should still be testable and runnable without it.
+`LibcameraPublisher` provides the Raspberry Pi camera backend behind the `ICamera` contract.
 
-If simulation were bolted awkwardly into `SystemManager` with `if hardware else simulate` logic everywhere, then:
+Its job is to acquire frames from the real camera path and publish them into the runtime pipeline. It does not participate in tracking, control, or actuation policy.
 
-- orchestration code would become cluttered
-- test paths would diverge from production paths
-- simulation would stop being a real substitute for hardware input
+### SOLID role
 
-Making simulation another `ICamera` implementation is therefore the cleanest and most robust design.
+**Single Responsibility Principle**
 
-### Why it exists (SRP)
+Its responsibility is camera acquisition for the libcamera path.
 
-Generates synthetic frames for development, testing, and software-only execution.
+**Liskov Substitution Principle**
 
-### Depends on (DIP)
+It can be used anywhere an `ICamera` is required.
 
-Implements `ICamera`, so higher-level code can use it without any changes.
+**Dependency Inversion Principle**
 
-### Does NOT do
+The rest of the system remains dependent on the camera abstraction while this class absorbs the backend-specific API.
 
-- no real camera I/O
-- no libcamera dependency
-- no downstream processing logic
+### Boundary value
 
-### SOLID highlights
+This class isolates libcamera lifecycle and integration details from the rest of the runtime. That keeps the pipeline independent of camera-stack implementation details.
 
-- **SRP:** one responsibility — provide simulated frame input
-- **LSP:** can stand in for a real camera source at the interface level
-- **DIP:** keeps higher-level code independent of whether input is real or simulated
+---
 
-### Why this is the best choice here
+## `SimulatedPublisher`
 
-Because this project explicitly benefits from being able to run the same pipeline on:
+### Purpose
 
-- Raspberry Pi hardware
-- Linux development machines
-- Windows/software-only environments
+`SimulatedPublisher` provides a software-only frame source through the same `ICamera` contract.
 
-That only works cleanly if simulation and hardware share the same abstraction boundary.
+It supports development, testing, and runtime execution when the real camera path is unavailable or unnecessary.
+
+### SOLID role
+
+**Single Responsibility Principle**
+
+Its responsibility is synthetic frame generation and publication.
+
+**Liskov Substitution Principle**
+
+It can replace `LibcameraPublisher` anywhere `ICamera` is consumed.
+
+**Open/Closed Principle**
+
+Additional camera implementations can be introduced without redesigning the consumers of `ICamera`.
+
+### Boundary value
+
+Simulation remains a first-class backend rather than an internal conditional path buried in runtime orchestration.
 
 ---
 
 ## `SunTracker`
 
-### Why SOLID is the right choice here
+### Purpose
 
-Vision logic should answer one question only:
+`SunTracker` is the vision stage. It converts a `FrameEvent` into a `SunEstimate`.
 
-**“Where is the bright solar target, and how confident are we?”**
+It validates frame layout assumptions, interprets image data, detects the target, and emits a typed estimate for downstream control.
 
-If `SunTracker` also handled control, actuator decisions, or hardware output, then:
+### SOLID role
 
-- testing image logic would become harder
-- algorithm tuning would be entangled with unrelated parts of the system
-- failures would be harder to localise
+**Single Responsibility Principle**
 
-For this project, keeping `SunTracker` as pure logic is the best design because it allows synthetic image testing and keeps vision independent from the rest of the control stack.
+Its reason to change is the target-detection method.
 
-### Why it exists (SRP)
+**Open/Closed Principle**
 
-Converts `FrameEvent` into `SunEstimate` containing centroid and confidence.
+Tracking internals can evolve while preserving the `SunEstimate` contract used downstream.
 
-### Depends on (DIP)
+**Encapsulation**
 
-Consumes frame data and exposes output without depending on controller, kinematics, or actuators.
+Frame validation and image-processing details remain contained within the tracker.
 
-### Does NOT do
+### Boundary value
 
-- no thread orchestration
-- no motion commands
-- no hardware output
-
-### SOLID highlights
-
-- **SRP:** image interpretation only
-- **OCP:** internal tracking algorithm can evolve without changing controller or hardware layers
-- **DIP:** no dependency on downstream stages
-
-### Why this is the best choice here
-
-Because vision should be testable with synthetic images and should not depend on the real mechanism being connected.
+This class separates image interpretation from runtime orchestration, control, and hardware output. That keeps vision faults and control faults easier to localise.
 
 ---
 
 ## `Controller`
 
-### Why SOLID is the right choice here
+### Purpose
 
-The controller should be responsible only for transforming image-space error into desired motion commands.
+`Controller` converts a tracking estimate into a platform setpoint.
 
-If the controller also performed kinematics or actuator safety shaping, then:
+It handles confidence gating, deadband behaviour, and command generation in platform coordinates.
 
-- controller tuning would be harder
-- control reasoning would be mixed with mechanism-specific details
-- it would become unclear whether bad motion came from control, kinematics, or actuator limits
+### SOLID role
 
-For this project, isolating the controller is the best choice because it keeps the control law understandable, testable, and tunable.
+**Single Responsibility Principle**
 
-### Why it exists (SRP)
+Its reason to change is the control-law policy from estimate space to platform-command space.
 
-Converts `SunEstimate` into `PlatformSetpoint` using deadband, confidence gating, and output limits.
+**Open/Closed Principle**
 
-### Depends on (DIP)
+Gains, deadband policy, saturation, and confidence handling can change without restructuring downstream stages.
 
-Consumes the estimation result only and emits setpoints independently of downstream implementation.
+**Dependency Inversion Principle**
 
-### Does NOT do
+The controller depends on typed estimate data rather than on camera backends or hardware output details.
 
-- no kinematics
-- no actuator safety limiting
-- no camera logic
+### Boundary value
 
-### SOLID highlights
+This stage separates control policy from both vision and mechanism mapping. That preserves a clear distinction between “what the platform should do” and “how the mechanism achieves it”.
 
-- **SRP:** control law only
-- **OCP:** controller gains and policies can change without redesigning the rest of the pipeline
-- **DIP:** does not depend on hardware-facing modules
+---
 
-### Why this is the best choice here
+## `ManualImuCoordinator`
 
-Because the controller is a logical stage in the pipeline with its own engineering meaning, and it should be possible to validate it separately from mechanism geometry and hardware output.
+### Purpose
+
+`ManualImuCoordinator` owns command-policy coordination for manual control and IMU-based correction.
+
+Its responsibilities include:
+
+- mapping manual potentiometer samples to platform setpoints
+- selecting whether potentiometer or GUI input owns manual commands
+- storing the latest IMU sample and tilt estimate
+- applying optional IMU correction to controller setpoints
+
+### SOLID role
+
+**Single Responsibility Principle**
+
+Its responsibility is command-policy coordination for manual ownership and tilt feedback.
+
+**Open/Closed Principle**
+
+Manual-input ownership rules and IMU-correction rules can evolve within this policy layer without restructuring runtime orchestration.
+
+**Dependency Inversion Principle**
+
+It depends on dedicated helpers such as `ManualInputMapper`, `ImuTiltEstimator`, and `ImuFeedbackMapper` rather than embedding those algorithms inline.
+
+### Boundary value
+
+This class keeps manual-command policy and IMU-correction policy out of `SystemManager`, reducing orchestration complexity and preserving focused runtime responsibilities.
+
+---
+
+## `ManualInputMapper`
+
+### Purpose
+
+`ManualInputMapper` converts manual input values into platform commands.
+
+This is pure mapping logic and does not belong in the ADC/input backend or in runtime orchestration.
+
+### SOLID role
+
+**Single Responsibility Principle**
+
+Its reason to change is the mapping from manual input values to commanded motion.
+
+**Dependency Inversion Principle**
+
+Higher-level policy code depends on a dedicated mapper rather than repeating scaling logic inline.
+
+### Boundary value
+
+This class keeps command semantics separate from hardware acquisition details.
+
+---
+
+## `ImuTiltEstimator`
+
+### Purpose
+
+`ImuTiltEstimator` converts reduced IMU acceleration data into a tilt estimate.
+
+It is a pure estimation component.
+
+### SOLID role
+
+**Single Responsibility Principle**
+
+Its reason to change is the tilt-estimation method.
+
+**Dependency Inversion Principle**
+
+Policy code depends on a dedicated estimator rather than embedding estimation logic into runtime control code.
+
+### Boundary value
+
+This class separates sensor transport from signal interpretation.
+
+---
+
+## `ImuFeedbackMapper`
+
+### Purpose
+
+`ImuFeedbackMapper` converts measured tilt into a bounded correction term.
+
+It is a control-support policy component.
+
+### SOLID role
+
+**Single Responsibility Principle**
+
+Its reason to change is the correction policy: gain, deadband, and output limits.
+
+**Open/Closed Principle**
+
+Correction behaviour can be refined without redesigning orchestration, backend startup, or hardware output code.
+
+### Boundary value
+
+This class makes tilt-correction policy explicit and testable.
 
 ---
 
 ## `Kinematics3RRS`
 
-### Why SOLID is the right choice here
+### Purpose
 
-Kinematics is mechanism-specific. It answers a different engineering question from control:
+`Kinematics3RRS` transforms a platform setpoint into actuator commands for the 3-RRS mechanism.
 
-**“Given a desired platform orientation, what actuator commands are needed?”**
+It is mechanism-specific mapping, separate from both control-law policy and hardware output.
 
-That is fundamentally different from:
-- detecting the sun
-- deciding desired motion
-- enforcing safety limits
-- driving hardware
+### SOLID role
 
-In this project, kinematics is the part most likely to change if the platform geometry, calibration, or mathematical model changes. Therefore, isolating it is especially valuable.
+**Single Responsibility Principle**
 
-### Why it exists (SRP)
+Its responsibility is mechanism mapping, including geometry, calibration, and inverse-kinematics behaviour.
 
-Converts `PlatformSetpoint` into `ActuatorCommand`.
+**Open/Closed Principle**
 
-### Depends on (DIP)
+Mechanism details can change here while preserving the upstream platform-setpoint contract.
 
-Consumes setpoints and produces actuator-space outputs without hardware dependencies.
+**Encapsulation**
 
-### Does NOT do
+Geometry and calibration parameters remain contained in a dedicated configuration structure.
 
-- no camera processing
-- no control policy
-- no PWM output
-- no global orchestration
+### Boundary value
 
-### SOLID highlights
-
-- **SRP:** mechanism mapping only
-- **OCP:** the internal model can evolve from a parameterised linear approximation to fuller geometry without forcing changes upstream
-- **DIP:** independent from actuator hardware
-
-### Why this is the best choice here
-
-Because platform geometry and calibration are likely to evolve independently of the rest of the system. A clean kinematics boundary makes that possible.
+This class preserves the physical meaning of the intermediate platform setpoint and keeps the mechanism model explicit rather than implicit.
 
 ---
 
 ## `ActuatorManager`
 
-### Why SOLID is the right choice here
+### Purpose
 
-Safety shaping is a cross-cutting concern, but it should not be hidden inside kinematics or servo output code.
+`ActuatorManager` is the actuator safety-conditioning stage.
 
-If clamping and rate limiting were scattered across multiple classes, then:
+It clamps actuator outputs and applies slew-rate limiting before commands reach the servo driver.
 
-- the real safety boundary would be unclear
-- testing the safety policy would be harder
-- future changes in controller or kinematics might accidentally bypass safety behaviour
+### SOLID role
 
-For this project, a dedicated actuator-safety stage is the most defensible design.
+**Single Responsibility Principle**
 
-### Why it exists (SRP)
+Its responsibility is actuator-command conditioning.
 
-Applies safety shaping to actuator commands before they reach the output layer.
+**Open/Closed Principle**
 
-### Depends on (DIP)
+Safety policy can change without redesigning low-level hardware access.
 
-Consumes and emits `ActuatorCommand` values without depending on the physical output mechanism.
+**Dependency Inversion Principle**
 
-### Does NOT do
+Downstream hardware code receives already-conditioned commands rather than raw control outputs.
 
-- no kinematics computation
-- no control law
-- no PWM or I2C output
+### Boundary value
 
-### SOLID highlights
-
-- **SRP:** saturation and rate limiting only
-- **OCP:** new shaping rules can be added without redesigning vision or kinematics
-- **DIP:** safety policy is kept independent from hardware driver details
-
-### Why this is the best choice here
-
-Because safety policy deserves its own explicit boundary. In a real-time actuator chain, hidden safety logic is weak engineering; explicit safety logic is much easier to justify and test.
+This class keeps safety policy separate from both mechanism mapping and final hardware output.
 
 ---
 
 ## `ServoDriver`
 
-### Why SOLID is the right choice here
+### Purpose
 
-The hardware output boundary is another place where SOLID is clearly the right engineering choice.
+`ServoDriver` is the final servo-output stage.
 
-Servo output involves hardware-specific behaviour such as:
+Its responsibilities are:
 
-- PWM mapping
-- driver policy
-- I2C-backed actuation
-- log-only fallback or hardware modes
+- degree-to-pulse conversion
+- PCA9685 access policy
+- application of already-conditioned commands
+- startup and stop parking behaviour
 
-If this logic were mixed into `ActuatorManager`, `SystemManager`, or kinematics, then:
+It does not own control policy, kinematics, or queueing.
 
-- hardware changes would ripple through unrelated code
-- software-only testing would become harder
-- debugging would become more confusing
+### SOLID role
 
-In this project, keeping `ServoDriver` as the output boundary is the best choice because it isolates the final hardware actuation step.
+**Single Responsibility Principle**
 
-### Why it exists (SRP)
+Its responsibility is final servo output handling.
 
-Receives safe actuator targets and applies them to the actual actuator interface.
+**Open/Closed Principle**
 
-### Depends on (DIP)
+Calibration, startup policy, and parking behaviour can change without restructuring upstream control or kinematics code.
 
-Consumes already-safe commands and isolates the output implementation.
+**Dependency Inversion Principle**
 
-### Does NOT do
+The rest of the pipeline operates in actuator-command units without depending directly on PWM register access.
 
-- no control decisions
-- no kinematics
-- no rate limiting policy
-- no vision processing
+### Boundary value
 
-### SOLID highlights
+This class keeps electrical and channel-mapping behaviour separate from motion semantics and safety policy.
 
-- **SRP:** final actuator output only
-- **OCP:** output backend can evolve without affecting control or kinematics
-- **DIP:** upstream logic does not depend on PWM/I2C implementation details
+---
 
-### Why this is the best choice here
+## `PCA9685`
 
-Because actuator hardware is likely to be one of the most changeable parts of the system. Keeping it isolated protects the rest of the pipeline.
+### Purpose
+
+`PCA9685` encapsulates the low-level PWM chip behaviour.
+
+Register-level I2C interaction is isolated here rather than spread through higher-level output code.
+
+### SOLID role
+
+**Single Responsibility Principle**
+
+Its responsibility is PCA9685 chip access.
+
+**Dependency Inversion Principle**
+
+Higher-level output stages use a dedicated chip wrapper rather than embedding low-level register access directly.
+
+### Boundary value
+
+This class prevents low-level bus and register operations from leaking upward into servo policy or control code.
+
+---
+
+## `BackendCoordinator`
+
+### Purpose
+
+`BackendCoordinator` owns the lifecycle of the two optional hardware backends:
+the ADS1115 manual potentiometer input and the MPU-6050/ICM-20600 IMU.
+
+This class was extracted from `SystemManager` to give backend resource ownership
+an explicit, single-responsibility boundary. `SystemManager` no longer needs to
+know about I2C device construction, backend start/stop sequencing, or the
+`ImuCallbackForwarder` adaptor — those details are encapsulated here.
+
+### SOLID role
+
+**Single Responsibility Principle** — Responsibility is hardware backend lifecycle:
+I2C device construction, start/stop sequencing, and sample delivery via callbacks.
+
+**Interface Segregation Principle** — `SystemManager` depends only on
+`BackendCoordinator::start()` and `stop()`. It has no visibility into which
+backends are active or how their callbacks are routed.
+
+### Boundary value
+
+Separating backend lifecycle from pipeline orchestration means `SystemManager`
+can be tested and reasoned about independently of hardware availability.
+
+---
+
+## `GuiManualDispatcher`
+
+### Purpose
+
+`GuiManualDispatcher` provides the dedicated event-driven thread for GUI manual
+mode. When `setSetpoint()` is called (from the Qt UI thread), the setpoint is
+pushed into a bounded freshest-data queue. The dispatcher's worker thread blocks
+on that queue and wakes immediately, building a platform setpoint via
+`ManualImuCoordinator` and dispatching directly to `Kinematics3RRS`.
+
+This class was introduced to remove the asymmetry where GUI manual mode depended
+on camera-frame wakeups while potentiometer manual mode was directly event-driven.
+Both manual paths now have structurally identical, independently-timed event paths.
+
+### SOLID role
+
+**Single Responsibility Principle** — Responsibility is GUI setpoint delivery:
+one queue, one thread, one dispatch path.
+
+**Open/Closed Principle** — The dispatcher works with any `ManualImuCoordinator`
+and any `Kinematics3RRS` instance without modification.
+
+**Interface Segregation Principle** — `SystemManager` depends on only
+`setSetpoint()`, `start()`, and `stop()`. The internal queue and thread are
+fully encapsulated.
+
+### Boundary value
+
+`setManualSetpoint()` on `SystemManager` is now a one-line forwarding call.
+The timing, queuing, and dispatch logic are entirely contained in this class.
 
 ---
 
 ## `SystemManager`
 
-### Why SOLID is the right choice here
+### Purpose
 
-Real-time embedded projects often fail architecturally when orchestration code turns into a “god object” that also contains algorithms, device logic, and safety rules.
+`SystemManager` is a thin runtime orchestrator. Its responsibilities are:
+- composing pipeline stages
+- owning two worker threads and two inter-thread queues
+- managing the runtime state machine (IDLE / STARTUP / SEARCHING / TRACKING /
+  MANUAL / FAULT / STOPPING)
+- lifecycle management (start / stop)
+- observer registration forwarding
 
-This project avoids that by keeping `SystemManager` focused on coordination:
+Backend lifecycle is delegated to `BackendCoordinator`. GUI manual dispatch is
+delegated to `GuiManualDispatcher`. Manual/IMU policy is delegated to
+`ManualImuCoordinator`. `SystemManager` itself is approximately 380 lines.
 
-- start/stop order
-- state transitions
-- queue/thread ownership
-- callback wiring
+### SOLID role
 
-That is exactly the right place for orchestration, and exactly the wrong place for vision, control, or hardware algorithms.
+**Single Responsibility Principle** — Responsibility is pipeline orchestration
+and runtime state coordination. It does not implement vision, control law,
+kinematics, safety shaping, hardware access, or GUI manual timing.
 
-### Why it exists (SRP)
+**Dependency Inversion Principle** — Depends on `ICamera` (not a concrete
+backend), `ManualImuCoordinator` (not manual hardware), and
+`GuiManualDispatcher` (not Qt directly).
 
-Owns lifecycle and wires the modules into the full event-driven pipeline.
+**Encapsulation** — Exposes explicit observer registration and control methods.
+Internal queue and thread management is private.
 
-### Depends on (DIP)
+### Honest assessment
 
-Receives `std::unique_ptr<ICamera>` and coordinates modules through abstractions and callbacks.
-
-### Does NOT do
-
-- no image processing algorithm
-- no control computation
-- no kinematics model
-- no low-level hardware output logic
-
-### SOLID highlights
-
-- **SRP:** orchestration and lifecycle only
-- **DIP:** depends on interfaces such as `ICamera`
-- **OCP:** pipeline composition can evolve while keeping module responsibilities clear
-
-### Why this is the best choice here
-
-Because this system genuinely needs a coordinator, but that coordinator must not absorb all the application logic. Keeping it orchestration-only is the most professional choice.
+`controlLoop_()` is now 10 lines with a single responsibility: drain camera
+frames and forward them to the automatic processing path. The manual branches
+have been fully removed. The class is substantially smaller than its previous
+form and its responsibilities are clearly bounded.
 
 ---
 
 ## `ThreadSafeQueue`
 
-### Why SOLID is the right choice here
+### Purpose
 
-Concurrency support should not be mixed directly into application logic.
+`ThreadSafeQueue` provides blocking handoff between producer and consumer stages.
 
-If queue behaviour were reimplemented ad hoc inside `SystemManager` or camera/actuator code, then:
+Its architectural value is not only storage. It also defines blocking wait behaviour and bounded freshest-data queue policy for the runtime pipeline.
 
-- correctness would be harder to verify
-- thread behaviour would be duplicated
-- testing concurrency behaviour would be more difficult
+### SOLID role
 
-A dedicated generic queue is therefore the best choice in this project.
+**Single Responsibility Principle**
 
-### Why it exists (SRP)
+Its responsibility is inter-thread queue handoff.
 
-Provides safe producer-consumer transfer between threads using blocking waits and stop semantics.
+**Open/Closed Principle**
 
-### Depends on (DIP)
+Queue policy remains encapsulated in one place instead of being reimplemented ad hoc across the runtime.
 
-Generic template independent of the solar-tracking domain.
+**Safe data management**
 
-### Does NOT do
+It uses STL-managed storage, explicit stop/reset behaviour, blocking waits, and bounded latest-only insertion.
 
-- no application policy
-- no control logic
-- no logging ownership
-- no thread ownership
+### Boundary value
 
-### SOLID highlights
-
-- **SRP:** queue behaviour only
-- **ISP:** small focused interface for push/pop/stop operations
-- **DIP:** application logic depends on a generic queue utility, not ad hoc thread-transfer code
-
-### Why this is the best choice here
-
-Because thread transfer semantics are important enough to deserve their own reusable and testable abstraction.
+This class provides deterministic handoff points between worker threads and avoids shared-state polling designs.
 
 ---
 
-## `Logger`
+## `LinuxEventLoop`
 
-### Why SOLID is the right choice here
+### Purpose
 
-Logging is useful across many modules, but logging policy should not be hard-coded separately inside each class.
+`LinuxEventLoop` isolates headless application-shell events from the realtime processing pipeline.
 
-A dedicated logger boundary keeps output behaviour more consistent and prevents unrelated code from being cluttered with direct output logic.
+It keeps process-level input handling and shutdown behaviour outside the tracking stages.
 
-### Why it exists (SRP)
+### SOLID role
 
-Provides a consistent logging API across the project.
+**Single Responsibility Principle**
 
-### Depends on (DIP)
+Its responsibility is the headless application event loop.
 
-Modules depend on a logging abstraction instead of writing directly to raw output streams everywhere.
+### Boundary value
 
-### Does NOT do
-
-- no orchestration
-- no control logic
-- no hardware decision-making
-
-### SOLID highlights
-
-- **SRP:** logging only
-- **DIP:** modules depend on logging boundary rather than hard-coded local output style
-
-### Why this is the best choice here
-
-Because consistent logging is especially important in a real-time event-driven system where debugging often depends on coherent timing and state output.
+This class keeps shell-level process control separate from the tracking runtime.
 
 ---
 
-## Summary: why SOLID was chosen here
+## `SystemFactory`
 
-SOLID is useful in this project because the project has several clearly different engineering concerns:
+### Purpose
 
-- platform-specific input
-- image processing
-- control
-- kinematics
-- actuator safety
-- hardware output
-- orchestration
-- concurrency support
+`SystemFactory` is the composition root.
 
-Trying to merge these together would make the code harder to:
+It selects and constructs the runtime graph and keeps assembly logic out of `main()`.
 
-- test
-- reason about
-- port
-- maintain
-- justify against assessment criteria
+### SOLID role
 
-In this specific project, SOLID is not just a software-engineering slogan. It is the most practical way to ensure that:
+**Single Responsibility Principle**
 
-- hardware-specific code stays isolated
-- software-only testing remains possible
-- simulation and real hardware can share the same architecture
-- safety logic is explicit
-- modules keep stable responsibilities
-- the event-driven pipeline remains understandable
+Its responsibility is runtime assembly.
 
-The result is a structure where each class has a clear reason to exist, a clear boundary, and a role that matches the real architecture of the system.
+**Dependency Inversion Principle**
+
+It centralises concrete-type selection while allowing the running system to depend on narrower interfaces and stage contracts.
+
+### Boundary value
+
+This class keeps backend selection and object assembly separate from runtime execution.
+
+---
+
+## Callback structure
+
+Callbacks are the primary inter-stage event mechanism in the processing pipeline.
+
+That choice fits this runtime because sensor and backend events arrive asynchronously and must be pushed forward through the staged pipeline. Callback boundaries make event timing explicit, keep freshness aligned with stage handoff, and avoid pull-style designs in which downstream code repeatedly queries upstream state.
+
+In this system, callback-based stage interfaces support:
+
+- explicit event timing
+- stage-local ownership of processing
+- reduced coupling between pipeline stages
+- direct integration with blocking/event-driven input paths
+- clearer test boundaries between producers and consumers
+
+---
+
+## Output-side command flow
+
+The output side follows a staged command progression.
+
+- `Controller` produces platform setpoints
+- `Kinematics3RRS` produces actuator commands
+- `ActuatorManager` conditions those commands
+- `ServoDriver` applies final hardware-oriented output behaviour
+
+Each stage hands forward a more concrete representation of the command while preserving clear ownership of policy, mechanism mapping, safety conditioning, and hardware output.
+
+---
+
+## Architectural summary
+
+The class structure separates the runtime into distinct layers:
+
+- acquisition boundary
+- estimation boundary
+- control boundary
+- manual/IMU policy boundary
+- mechanism-mapping boundary
+- safety-conditioning boundary
+- final hardware-output boundary
+- orchestration boundary
+- application-shell boundary
+
+That separation supports hardware isolation, event-driven processing, bounded inter-thread handoff, staged reasoning about faults, and focused testing of individual behaviours.
+
+## Final judgement
+
+The class structure is strongest where it keeps platform-specific code isolated, preserves clear event flow between stages, and separates policy, computation, orchestration, and hardware output into dedicated boundaries.
+
+The key architectural decisions are:
+
+- `ICamera` as the frame-source abstraction
+- backend isolation in `LibcameraPublisher` and `SimulatedPublisher`
+- dedicated logic stages in `SunTracker`, `Controller`, `ManualInputMapper`, `ImuTiltEstimator`, and `ImuFeedbackMapper`
+- policy isolation in `ManualImuCoordinator`
+- mechanism isolation in `Kinematics3RRS`
+- safety conditioning in `ActuatorManager`
+- final hardware mapping isolation in `ServoDriver` and `PCA9685`
+- orchestration in `SystemManager`
+- runtime assembly in `SystemFactory`
+
+Together, these boundaries support a maintainable staged runtime rather than a tightly coupled monolithic tracker implementation.

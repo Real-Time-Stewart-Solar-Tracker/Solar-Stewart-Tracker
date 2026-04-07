@@ -1,0 +1,71 @@
+name: Raspberry Pi Hardware Smoke Tests
+
+on:
+  workflow_dispatch:
+
+jobs:
+  hw-tests:
+    runs-on: [self-hosted, linux, arm64]
+
+    env:
+      BUILD_DIR: build-pi
+      CMAKE_GENERATOR: Ninja
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          if ! sudo apt-get install -y \
+            cmake \
+            ninja-build \
+            g++ \
+            pkg-config \
+            libgpiod-dev \
+            libgpiodcxx-dev \
+            i2c-tools; then
+            sudo apt-get install -y \
+              cmake \
+              ninja-build \
+              g++ \
+              pkg-config \
+              libgpiod-dev \
+              i2c-tools
+          fi
+
+      - name: Configure (Pi hardware smoke path)
+        run: |
+          cmake -S . -B "${BUILD_DIR}" \
+            -G "${CMAKE_GENERATOR}" \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DSOLAR_ENABLE_TESTS=ON \
+            -DSOLAR_ENABLE_HW_TESTS=ON \
+            -DSOLAR_ENABLE_QT=OFF \
+            -DSOLAR_TRY_LIBCAMERA=OFF \
+            -DSOLAR_TRY_OPENCV=OFF
+
+      - name: Build curated hardware-smoke targets
+        run: |
+          cmake --build "${BUILD_DIR}" --parallel --target \
+            test_pca9685 \
+            test_servodriver \
+            test_mpu6050_publisher \
+            test_linux_i2c_hw
+
+      - name: Run curated hardware-smoke tests
+        run: bash ./scripts/test_pi_hw.sh "${BUILD_DIR}"
+
+      - name: Upload hardware test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: raspberry-pi-hardware-test-log
+          path: |
+            ${{ env.BUILD_DIR }}/Testing
+            ${{ env.BUILD_DIR }}/CTestCostData.txt
+            ${{ env.BUILD_DIR }}/CMakeCache.txt
+          if-no-files-found: warn

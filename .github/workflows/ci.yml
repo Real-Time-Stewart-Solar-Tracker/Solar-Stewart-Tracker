@@ -1,54 +1,149 @@
-name: CI
+name: Build and Test
 
 on:
   push:
+    branches: [ main ]
   pull_request:
+    branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
 
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+    permissions:
+      contents: read
 
-      - name: Install build tools
-        run: sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build
+    env:
+      LIBGPIOD_VERSION: "2.2.2"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            autoconf \
+            autoconf-archive \
+            automake \
+            cmake \
+            doxygen \
+            g++ \
+            graphviz \
+            lcov \
+            libjsoncpp-dev \
+            libtool \
+            make \
+            ninja-build \
+            pkg-config \
+            wget \
+            xz-utils
+
+      - name: Build and install libgpiod v2 with C++ bindings
+        run: |
+          cd /tmp
+          wget https://mirrors.edge.kernel.org/pub/software/libs/libgpiod/libgpiod-${LIBGPIOD_VERSION}.tar.xz
+          tar -xf libgpiod-${LIBGPIOD_VERSION}.tar.xz
+          cd libgpiod-${LIBGPIOD_VERSION}
+          ./configure \
+            --prefix=/usr/local \
+            --enable-tools \
+            --enable-bindings-cxx
+          make -j"$(nproc)"
+          sudo make install
+          sudo ldconfig
+
+      - name: Verify libgpiod install
+        run: |
+          pkg-config --modversion libgpiod
+          test -f /usr/local/include/gpiod.hpp
+          test -f external/libgpiod_event_demo/gpioevent.h
 
       - name: Configure (Release)
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+        env:
+          PKG_CONFIG_PATH: /usr/local/lib/pkgconfig:/usr/local/lib64/pkgconfig:${{ env.PKG_CONFIG_PATH }}
+          CMAKE_PREFIX_PATH: /usr/local
+          CPATH: /usr/local/include:${{ env.CPATH }}
+          LIBRARY_PATH: /usr/local/lib:/usr/local/lib64:${{ env.LIBRARY_PATH }}
+        run: |
+          cmake -S . -B build \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_VERBOSE_MAKEFILE=ON
 
       - name: Build
-        run: cmake --build build -j
+        env:
+          PKG_CONFIG_PATH: /usr/local/lib/pkgconfig:/usr/local/lib64/pkgconfig:${{ env.PKG_CONFIG_PATH }}
+          CMAKE_PREFIX_PATH: /usr/local
+          CPATH: /usr/local/include:${{ env.CPATH }}
+          LIBRARY_PATH: /usr/local/lib:/usr/local/lib64:${{ env.LIBRARY_PATH }}
+        run: |
+          cmake --build build --parallel --verbose
 
       - name: Run tests
-        run: ctest --test-dir build --output-on-failure
-  coverage:
-    runs-on: ubuntu-latest
+        env:
+          LD_LIBRARY_PATH: /usr/local/lib:/usr/local/lib64:${{ env.LD_LIBRARY_PATH }}
+        run: |
+          ctest --test-dir build --output-on-failure --verbose
 
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+      - name: Verify Doxygen documentation build
+        run: |
+          doxygen Doxyfile
+          test -f docs/html/index.html
 
-      - name: Install build tools
-        run: sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build gcovr
+      - name: Configure (Coverage)
+        env:
+          PKG_CONFIG_PATH: /usr/local/lib/pkgconfig:/usr/local/lib64/pkgconfig:${{ env.PKG_CONFIG_PATH }}
+          CMAKE_PREFIX_PATH: /usr/local
+          CPATH: /usr/local/include:${{ env.CPATH }}
+          LIBRARY_PATH: /usr/local/lib:/usr/local/lib64:${{ env.LIBRARY_PATH }}
+        run: |
+          cmake -S . -B build-cov \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DSOLAR_ENABLE_COVERAGE=ON
 
-      - name: Configure (Debug + coverage)
-        run: cmake -S . -B build-coverage -G Ninja -DCMAKE_BUILD_TYPE=Debug -DSOLAR_ENABLE_COVERAGE=ON
+      - name: Build (Coverage)
+        env:
+          PKG_CONFIG_PATH: /usr/local/lib/pkgconfig:/usr/local/lib64/pkgconfig:${{ env.PKG_CONFIG_PATH }}
+          CMAKE_PREFIX_PATH: /usr/local
+          CPATH: /usr/local/include:${{ env.CPATH }}
+          LIBRARY_PATH: /usr/local/lib:/usr/local/lib64:${{ env.LIBRARY_PATH }}
+        run: |
+          cmake --build build-cov --parallel
 
-      - name: Build
-        run: cmake --build build-coverage -j
-
-      - name: Run tests
-        run: ctest --test-dir build-coverage --output-on-failure
+      - name: Run tests (Coverage)
+        env:
+          LD_LIBRARY_PATH: /usr/local/lib:/usr/local/lib64:${{ env.LD_LIBRARY_PATH }}
+        run: |
+          ctest --test-dir build-cov --output-on-failure
 
       - name: Generate coverage report
-        run: cmake --build build-coverage --target coverage
+        run: |
+          lcov \
+            --capture \
+            --directory build-cov \
+            --output-file coverage.info \
+            --ignore-errors mismatch
+          lcov \
+            --remove coverage.info \
+            '/usr/*' \
+            '*/external/*' \
+            '*/tests/*' \
+            --output-file coverage_filtered.info
+          genhtml \
+            coverage_filtered.info \
+            --output-directory coverage_html \
+            --title "Solar Stewart Tracker Coverage"
 
-      - name: Upload coverage artifacts
+      - name: Upload coverage report
         uses: actions/upload-artifact@v4
         with:
           name: coverage-report
-          path: |
-            build-coverage/coverage.xml
-            build-coverage/coverage.html
+          path: coverage_html/
+          retention-days: 14

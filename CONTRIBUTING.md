@@ -1,155 +1,111 @@
-# Contributing Guidelines
+# Contributing
 
-Thank you for contributing to the Solar Stewart Tracker project.
+## Purpose
 
-This project is structured as a real-time embedded, event-driven C++ system.
-Please follow the guidelines below to ensure code quality, reproducibility,
-and architectural consistency.
+This repository contains the ENG5220 real-time embedded programming project codebase.
+Contributions should preserve the taught architecture:
 
----
+- blocking I/O wakes threads
+- callbacks pass events between classes
+- setters send control outputs
+- no polling loops in the realtime path
+- no sleep-based fake realtime control paths
+- reusable code stays modular
+- tests and documentation stay in sync with the code
 
-## 1. Project Philosophy
+## Workflow
 
-This project follows:
+1. Create an issue before starting substantial work.
+2. Use a short feature or fix branch.
+3. Keep each branch focused on one change.
+4. Make small, descriptive commits.
+5. Open a pull request with a clear summary of:
+   - what changed
+   - why it changed
+   - how it was tested
 
-- SOLID principles
-- Event-driven multi-threaded architecture
-- Hardware abstraction layers
-- Reproducible CMake builds
-- Clear separation between:
-  - sensors
-  - control
-  - actuators
-  - system orchestration
-  - UI
+## Branch naming
 
-Do not introduce tight coupling between modules.
+Examples:
 
----
+- `feature/manual-input-queue`
+- `feature/latency-csv-export`
+- `fix/imu-whoami-config`
+- `fix/cmake-optional-deps`
 
-## 2. Branching Model
+## Coding expectations
 
-- `main` → stable, tested code only
-- Feature branches → `feature/<short-description>`
-- Bug fixes → `fix/<short-description>`
+### Realtime/event-driven structure
 
-Never push directly to `main`.
+Use the taught userspace pattern:
 
-Example:
+- one blocking loop per event source
+- short callback after wake-up
+- heavier work moved into the appropriate worker thread
 
-    git checkout -b feature/qt-overlay
-    git commit -m "Add Qt overlay rendering"
-    git push origin feature/qt-overlay
+Examples of acceptable event sources:
 
-Open a Pull Request for review before merging.
-
----
-
-## 3. Code Style
-
-- C++17 standard
-- RAII preferred over manual memory management
-- No raw owning pointers
-- Use `std::unique_ptr` or `std::shared_ptr`
-- Avoid global variables
-- Use `const` wherever possible
-- Prefer clear names over short names
-
-Formatting:
-
-- 4 spaces indentation
-- Braces on same line
-- One class per header/source pair
-
----
-
-## 4. Threading Rules
-
-This system is event-driven.
-
-- No busy waiting
-- No `sleep()` loops for logic timing
-- Use condition variables or callbacks
-- Avoid blocking inside callbacks
-
-UI must never block control or camera threads.
-
----
-
-## 5. Hardware Safety
-
-When modifying actuator code:
-
-- Always ensure safe clamping of servo limits
-- Never bypass safety checks
-- Ensure neutral output on stop()
-
-Real hardware must never move unexpectedly.
-
----
-
-## 6. Testing
-
-Before submitting a PR:
-
-- Build from clean directory:
-
-      rm -rf build
-      cmake -S . -B build
-      cmake --build build -j4
-
-- Ensure:
-  - No warnings
-  - All tests pass
-  - Application runs correctly
-
----
-
-## 7. Commit Message Format
-
-Use clear and descriptive commit messages.
-
-Good examples:
-
-    Add YUV420 stride-safe mmap handling
-    Fix Qt overlay alignment bug
-    Refactor ServoDriver for better safety checks
+- GPIO edge events
+- camera callbacks / blocking frame acquisition
+- blocking queue waits
+- timerfd or equivalent blocking timing only where a real event source does not exist
 
 Avoid:
 
-    fix
-    update
-    stuff
+- polling loops
+- `sleep`, `usleep`, or `sleep_for` in the control path
+- GUI-driven control execution
+- heavy work inside callbacks
 
----
+### C++ style
 
-## 8. Documentation
+- Use C++17.
+- Prefer `std::thread`, STL containers, and RAII.
+- Prefer references and value types over raw owning pointers.
+- Avoid `malloc`, `free`, and unnecessary `new` / `delete`.
+- Keep interfaces narrow and responsibilities clear.
+- Preserve existing naming and directory structure unless there is a strong reason to change it.
 
-If you modify architecture:
+### Comments and documentation
 
-- Update `docs/system_architecture.md`
-- Update relevant diagrams
-- Update Doxygen comments
+- Keep comments short and technical.
+- Do not leave patch-note comments in code.
+- Public headers should use Doxygen comments.
+- Update Doxygen when public APIs change.
 
-Public APIs must be documented.
+## Tests
 
----
+Before opening a pull request, run the relevant checks.
 
-## 9. Large Changes
+### Core build and tests
 
-For architectural or structural changes:
+```bash
+./scripts/build_core.sh build
+./scripts/test_core.sh build
+Raspberry Pi hardware smoke tests
+./scripts/build_pi_debug.sh build-pi
+./scripts/test_pi_hw.sh build-pi
+Doxygen
+./scripts/build_docs.sh
+Latency evidence
 
-- Open an issue first
-- Explain design reasoning
-- Wait for review before implementation
+If a change affects the realtime path, update the evidence.
 
----
+Example:
 
-## 10. License
+./scripts/run_latency.sh build artefacts/latency.csv solar_tracker
 
-By contributing, you agree that your contributions will be licensed
-under the MIT License of this project.
+Store:
 
----
-
-Thank you for maintaining code quality and system integrity.
+raw CSV
+exact command used
+platform details
+short summary of average, max, and jitter
+Pull request checklist
+ code builds
+ relevant tests pass
+ no debug prints left in place
+ no temporary comments remain
+ public headers are documented
+ docs stay consistent with the code
+ realtime path still follows blocking-I/O event-driven design

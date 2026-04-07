@@ -1,72 +1,60 @@
-# =========================
 # Build directories
-# =========================
-build/
+/build/
+/build-*/
 cmake-build-*/
 out/
+bin/
+lib/
+
+# CMake generated files
+CMakeCache.txt
 CMakeFiles/
+CTestTestfile.cmake
+cmake_install.cmake
+compile_commands.json
+Makefile
 Testing/
 
-# =========================
-# CMake generated files
-# =========================
-CMakeCache.txt
-cmake_install.cmake
-Makefile
-CTestTestfile.cmake
-
-# =========================
-# Compiled objects & binaries
-# =========================
-*.o
-*.obj
-*.exe
-*.dll
-*.so
-*.a
-*.lib
-*.pdb
-
-# =========================
-# Logs
-# =========================
-*.log
-
-# =========================
-# Visual Studio / VSCode
-# =========================
-.vs/
-.vscode/
-*.user
-*.suo
-
-# =========================
-# Doxygen generated output
-# =========================
-docs/doxygen/html/
-docs/doxygen/latex/
-docs/doxygen/xml/
-
-!docs/doxygen/Doxyfile
-
-# =========================
-# Coverage
-# =========================
-coverage/
+# Coverage / profiling
 *.gcda
 *.gcno
 *.gcov
+*.profraw
+*.profdata
+coverage/
+htmlcov/
 
-# =========================
-# Temporary / editor files
-# =========================
-*.tmp
-*.bak
+# Logs / runtime artefacts
+*.log
+latency_run.log
+*.csv
+
+# Editor / IDE
+.vscode/
+.idea/
 *.swp
-*.cache
+*.swo
 
-# =========================
-# OS files
-# =========================
+# OS junk
 .DS_Store
 Thumbs.db
+
+# Python cache if scripts use python
+__pycache__/
+*.pyc
+
+# Qt generated
+moc_*.cpp
+qrc_*.cpp
+ui_*.h
+
+# Doxygen output
+docs/html/
+docs/latex/
+
+# Test executables and temporary artefacts
+/tests/*.exe
+/tests/*.out
+
+# Misc
+*~

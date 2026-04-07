@@ -1,521 +1,55 @@
 # System Architecture
 
-This document describes the current software architecture of the **Solar Stewart Tracker** repository.
+## Overview
 
-The implementation is structured as an **event-driven, multi-threaded processing pipeline** with clear separation between:
+The system is structured as a staged, event-driven pipeline in Linux userspace. Frame acquisition, tracking, control, kinematic mapping, and actuator output are separated into distinct classes so that each stage has a clear responsibility and a bounded interface. This is consistent with the taught architecture of sensor events propagating through callbacks and typed data transformations to control outputs.
 
-- frame acquisition
-- vision and control
-- actuation and safety
-- application/bootstrap logic
-- optional user-interface layers
+The implemented automatic processing path is:
 
-The same core pipeline is reused across:
+**ICamera → SunTracker → Controller → ManualImuCoordinator → Kinematics3RRS → ActuatorManager → ServoDriver**
 
-- **Linux / Raspberry Pi** builds
-- **desktop simulation** builds
-- **CLI/headless** execution
-- the optional **Qt GUI** target
+`SystemManager` orchestrates this pipeline and manages runtime state. `BackendCoordinator` owns hardware backend lifecycle. `GuiManualDispatcher` provides the event-driven GUI manual path. `SystemFactory` assembles the runtime graph.
 
-------------------------------------------------------------------------
+This class structure is stronger than a monolithic alternative because it separates:
 
-## 1) Related documents
+- sensor acquisition from estimation
+- estimation from control
+- control from mechanism-specific mapping
+- mechanism mapping from actuator safety conditioning
+- actuator conditioning from final hardware output
+- runtime orchestration from backend implementation details
 
-This architecture should be read alongside:
-
-- `docs/requirements.md`
-- `docs/realtime_analysis.md`
-- `docs/state_machine.md`
-- `docs/testing.md`
-- `docs/REPRODUCIBILITY.md`
-
-------------------------------------------------------------------------
-
-## 2) Architectural overview
-
-The repository is organised around a staged runtime pipeline:
-
-1. **Acquire**  
-   A camera backend publishes `FrameEvent` objects.
-
-2. **Estimate / Control / Kinematics**  
-   The control thread consumes frames and produces actuator commands through:
-   - `SunTracker`
-   - `Controller`
-   - `Kinematics3RRS`
-
-3. **Safety / Actuation**  
-   The actuator thread consumes commands and applies them through:
-   - `ActuatorManager`
-   - `ServoDriver`
-
-Inter-stage communication is performed through **bounded blocking queues**:
-
-- `ThreadSafeQueue<FrameEvent>` with capacity **1**
-- `ThreadSafeQueue<ActuatorCommand>` with capacity **1**
-
-This gives the system a **freshest-data policy**:
-when a queue is full, the newest item is retained and the oldest item is dropped.
-
-That design choice is appropriate for this repository because the tracker values:
-
-- fresh sensor data
-- bounded backlog
-- low latency
-- predictable pipeline behaviour
-
-over processing every historical frame.
-
-------------------------------------------------------------------------
-
-## 3) High-level module structure
-
-### 3.1 Core processing modules
-
-The current repository core is built from the following main modules:
-
-- `ICamera`  
-  Abstract camera interface used by the system manager.
-
-- `LibcameraPublisher`  
-  Linux / Raspberry Pi camera backend, compiled only when `libcamera` is available.
-
-- `SimulatedPublisher`  
-  Simulation backend used when `libcamera` is unavailable.
-
-- `SystemManager`  
-  Top-level orchestrator that owns the processing modules, queues, worker threads, and state transitions.
-
-- `SunTracker`  
-  Vision stage that processes `FrameEvent` and produces `SunEstimate`.
-
-- `Controller`  
-  Converts `SunEstimate` into `PlatformSetpoint`.
-
-- `Kinematics3RRS`  
-  Converts `PlatformSetpoint` into `ActuatorCommand`.
-
-- `ActuatorManager`  
-  Applies command limiting and safety shaping before final output.
-
-- `ServoDriver`  
-  Sends actuator commands to hardware or log-only output.
-
-- `LatencyMonitor`  
-  Collects timing measurements across the pipeline.
-
-### 3.2 Application/bootstrap modules
-
-The repository also includes application-level bootstrap code:
-
-- `app::AppConfig`  
-  Holds runtime configuration values.
-
-- `app::SystemFactory`  
-  Creates the camera backend and `SystemManager` from configuration.
-
-- `app::Application`  
-  Starts the system and wires optional UI observers.
-
-- `app::LinuxEventLoop`  
-  Linux event loop for signal handling, CLI input, and periodic UI ticking.
-
-- `app::CliController`  
-  Headless and terminal command interface.
-
-### 3.3 Optional UI modules
-
-Optional UI components exist separately from the core pipeline:
-
-- `ui::UiViewer`  
-  OpenCV-backed viewer support compiled into the CLI path when OpenCV is found.
-
-- `src/qt/main_qt.cpp` and `MainWindow`  
-  Optional Qt GUI target built as `solar_tracker_qt` when Qt5 is found.
-
-The UI layers observe the pipeline; they do not replace the processing architecture.
-
-------------------------------------------------------------------------
-
-## 4) Entry points and build variants
-
-The current repository provides the following application entry points.
-
-### 4.1 CLI / headless application
-
-Target:
-
-- `solar_tracker`
-
-Entry source:
-
-- `src/main.cpp`
-
-Bootstrap flow:
-
-- `app::Application`
-- `app::SystemFactory`
-- `SystemManager`
-
-On Linux, the CLI application uses `app::LinuxEventLoop`.
-
-If OpenCV is available and enabled, `UiViewer` support is compiled into the CLI path.
-
-### 4.2 Qt GUI application
-
-Target:
-
-- `solar_tracker_qt`
-
-Entry source:
-
-- `src/qt/main_qt.cpp`
-
-This target is built only when Qt5 is found.
-
-It reuses the same underlying processing architecture rather than introducing a separate control pipeline.
-
-### 4.3 Camera backend selection
-
-Camera backend selection is handled by `app::SystemFactory`:
-
-- if `libcamera` is available on supported Linux systems, the system uses `LibcameraPublisher`
-- otherwise the system uses `SimulatedPublisher`
-
-This keeps backend selection out of `main()` and centralises construction logic.
-
-------------------------------------------------------------------------
-
-## 5) Runtime threading model
-
-The runtime design is event-driven and uses blocking waits rather than busy waiting.
-
-### 5.1 Thread summary
-
-| Thread / context | Main responsibility | Wake-up source |
-|---|---|---|
-| Camera backend thread or callback context | Acquire frames and emit callbacks | backend-specific event/callback mechanism |
-| Control thread (`SystemManager`) | Vision + control + kinematics | blocking wait on `frame_q_` |
-| Actuator thread (`SystemManager`) | Safety + output application | blocking wait on `cmd_q_` |
-| Linux main/event thread | Signal handling, CLI input, UI ticking | blocking `poll()` on Linux |
-
-### 5.2 Important accuracy note
-
-The architecture avoids **busy polling loops** in the processing pipeline.
-
-However, the current Linux application loop does use **blocking `poll()`** in `app::LinuxEventLoop`, which is an event-wait mechanism, not a spin loop.
-
-So the accurate statement is:
-
-- the runtime path is **event-driven**
-- worker threads **block while waiting for work**
-- the implementation does **not** rely on active busy-wait polling in the pipeline stages
-
-------------------------------------------------------------------------
-
-## 6) Data flow through the pipeline
-
-The main runtime data path is:
-
-`ICamera` -> `SystemManager::onFrame_()` -> `frame_q_` -> `SunTracker` -> `Controller` -> `Kinematics3RRS` -> `cmd_q_` -> `ActuatorManager` -> `ServoDriver`
-
-### 6.1 Data payloads
-
-The current payload types are defined in `include/common/Types.hpp`:
-
-- `FrameEvent`
-- `SunEstimate`
-- `PlatformSetpoint`
-- `ActuatorCommand`
-
-### 6.2 Stage-by-stage flow
-
-#### Stage A: Frame acquisition
-
-A camera backend delivers a `FrameEvent` through the registered frame callback.
-
-This callback reaches:
-
-- `SystemManager::onFrame_()`
-
-`SystemManager` records capture timing and pushes the frame into:
-
-- `frame_q_`
-
-#### Stage B: Vision and control
-
-The control worker thread blocks on:
-
-- `frame_q_.wait_pop()`
-
-When a frame is available, the thread runs:
-
-1. `SunTracker`
-2. `Controller`
-3. `Kinematics3RRS`
-
-When the system is in automatic operation, this produces an `ActuatorCommand`, which is pushed into:
-
-- `cmd_q_`
-
-#### Stage C: Safety and actuation
-
-The actuator worker thread blocks on:
-
-- `cmd_q_.wait_pop()`
-
-When a command is available, it runs:
-
-1. `ActuatorManager`
-2. `ServoDriver`
-
-This stage is responsible for final output application.
-
-------------------------------------------------------------------------
-
-## 7) Queue design and realtime behaviour
-
-The current queue configuration is intentionally small:
-
-- frame queue capacity = **1**
-- command queue capacity = **1**
-
-### 7.1 Why capacity 1 is used
-
-This ensures:
-
-- old frames do not accumulate
-- stale commands are discarded
-- the actuator path uses the newest available command
-- latency remains bounded by design
-
-### 7.2 Freshest-data policy
-
-The queue utility supports `push_latest()` behaviour.
-
-If a queue is already full:
-
-- the oldest item is removed
-- the newest item is inserted
-
-This means the architecture prioritises **freshness over completeness**.
-
-That is a defensible design for a tracker/control pipeline where the newest input is typically more valuable than preserving all historical data.
-
-------------------------------------------------------------------------
-
-## 8) State and control ownership
-
-`SystemManager` is the main coordination point for:
-
-- lifecycle (`start()`, `stop()`)
-- worker thread ownership
-- state transitions
-- manual mode entry and exit
-- observer registration
-- queue ownership
-- latency aggregation hooks
-
-The state type is defined in:
-
-- `include/system/TrackerState.hpp`
-
-The detailed state-machine description is documented separately in:
-
-- `docs/state_machine.md`
-
-This document focuses on the **software structure** rather than the full behavioural transition table.
-
-------------------------------------------------------------------------
-
-## 9) Observer and telemetry hooks
-
-The current architecture exposes observer hooks for UI and telemetry integration.
-
-`SystemManager` supports registration for:
-
-- frame observers
-- estimate observers
-- setpoint observers
-- command observers
-- latency observers
-
-This lets the UI layer observe runtime behaviour without owning the real-time pipeline itself.
-
-That separation is useful for:
-
-- headless operation
-- Qt UI integration
-- OpenCV viewer integration
-- latency and telemetry display
-
-------------------------------------------------------------------------
-
-## 10) Latency instrumentation
-
-The repository includes latency instrumentation through:
-
-- `common::LatencyMonitor`
-- `SystemManager` timing bookkeeping
-
-The implemented measurement points include:
-
-- capture time
-- estimate generation time
-- control output time
-- actuation application time
-
-This enables reporting of stage-to-stage latency such as:
-
-- capture -> estimate
-- estimate -> control
-- control -> actuation
-
-Detailed discussion of timing analysis belongs in:
-
-- `docs/realtime_analysis.md`
-- `docs/latency_measurement.md`
-
-------------------------------------------------------------------------
-
-## 11) Separation of concerns
-
-The architecture is designed to keep responsibilities separated.
-
-### 11.1 Sensor abstraction
-
-Camera acquisition is isolated behind:
-
-- `ICamera`
-
-This allows the repository to support both:
-
-- Raspberry Pi camera input
-- desktop simulation
-
-without changing the control pipeline API.
-
-### 11.2 Vision/control separation
-
-The vision stage, controller, and kinematics stage are separate modules:
-
-- `SunTracker`
-- `Controller`
-- `Kinematics3RRS`
-
-This improves testability and prevents camera-specific code from leaking into control logic.
-
-### 11.3 Safety/output separation
-
-The actuation path is also split:
-
-- `ActuatorManager`
-- `ServoDriver`
-
-This keeps output policy separate from the low-level hardware command application layer.
-
-### 11.4 Bootstrap separation
-
-Construction and application startup are separated from the control logic:
-
-- `AppConfig`
-- `SystemFactory`
-- `Application`
-
-That keeps entry points thin and reduces duplicated setup logic.
-
-------------------------------------------------------------------------
-
-## 12) Current repository file mapping
-
-### 12.1 Core headers
-
-- `include/common/ThreadSafeQueue.hpp`
-- `include/common/Types.hpp`
-- `include/common/LatencyMonitor.hpp`
-- `include/common/Logger.hpp`
-- `include/sensors/ICamera.hpp`
-- `include/sensors/LibcameraPublisher.hpp`
-- `include/sensors/SimulatedPublisher.hpp`
-- `include/vision/SunTracker.hpp`
-- `include/control/Controller.hpp`
-- `include/control/Kinematics3RRS.hpp`
-- `include/actuators/ActuatorManager.hpp`
-- `include/actuators/ServoDriver.hpp`
-- `include/actuators/PCA9685.hpp`
-- `include/system/SystemManager.hpp`
-- `include/system/TrackerState.hpp`
-
-### 12.2 Core sources
-
-- `src/sensors/LibcameraPublisher.cpp`
-- `src/sensors/SimulatedPublisher.cpp`
-- `src/vision/SunTracker.cpp`
-- `src/control/Controller.cpp`
-- `src/control/Kinematics3RRS.cpp`
-- `src/actuators/ActuatorManager.cpp`
-- `src/actuators/ServoDriver.cpp`
-- `src/actuators/PCA9685.cpp`
-- `src/system/SystemManager.cpp`
-
-### 12.3 Application/bootstrap sources
-
-- `src/main.cpp`
-- `src/app/AppConfig.cpp`
-- `src/app/Application.cpp`
-- `src/app/CliController.cpp`
-- `src/app/LinuxEventLoop.cpp`
-- `src/app/SystemFactory.cpp`
-
-### 12.4 Optional UI sources
-
-- `src/ui/UiViewer.cpp`
-- `src/ui/OverlayDraw.cpp`
-- `src/qt/main_qt.cpp`
-- `src/qt/MainWindow.cpp`
-- `src/qt/MainWindow.hpp`
-
-------------------------------------------------------------------------
-
-## 13) Requirement-to-architecture mapping
-
-| Architectural responsibility | Main module(s) |
-|---|---|
-| Frame acquisition | `ICamera`, `LibcameraPublisher`, `SimulatedPublisher` |
-| Frame transport | `ThreadSafeQueue<FrameEvent>` |
-| Sun detection and estimation | `SunTracker` |
-| Control law | `Controller` |
-| Platform-to-actuator mapping | `Kinematics3RRS` |
-| Command transport | `ThreadSafeQueue<ActuatorCommand>` |
-| Safety limiting and command shaping | `ActuatorManager` |
-| Hardware output | `ServoDriver`, `PCA9685` |
-| Lifecycle and state control | `SystemManager` |
-| App bootstrap | `AppConfig`, `SystemFactory`, `Application` |
-| Linux signal/input event loop | `LinuxEventLoop`, `CliController` |
-| Telemetry and latency observation | `LatencyMonitor`, observer callbacks |
-| Optional GUI and viewer layer | `UiViewer`, Qt UI sources |
-
-------------------------------------------------------------------------
-
-## 14) Architecture diagram
-
-The repository includes the following architecture image:
-
-```text
-diagrams/Threaded Event-Driven System Architecture Diagram.png
-````
-
-Embedded reference:
-
-![Threaded Event Architecture](../diagrams/thread_event_architecture.png)
+That separation improves maintainability, reduces coupling, and makes the realtime event flow explicit.
 
 ---
 
-## 15) UML / Architecture Diagrams
+## Architectural Rationale
 
-These diagrams describe the high-level, event-driven architecture of the current repository.
+The core design decision is to preserve a forward-only event path through specialised classes instead of building one large tracker class. In this repository, each stage transforms one well-defined form of data into the next.
 
-### 15.1 UML Class Diagram
+For automatic tracking:
+
+- the camera backend emits frames
+- the tracker estimates target position and confidence
+- the controller converts that estimate into a platform command
+- the manual/IMU coordination layer applies optional correction
+- the kinematics layer maps platform motion into actuator-space commands
+- the actuator manager applies command conditioning and output safety policy
+- the servo driver performs final calibrated output to the physical device
+
+For manual mode, both input paths are independently event-driven:
+
+**Pot-driven manual:** ADS1115 ALERT/RDY GPIO edge → `onManualPotSample_()` → setpoint built and dispatched directly to `Kinematics3RRS`. Timing is driven by the ADS1115 conversion rate, independent of camera frames.
+
+**GUI-driven manual:** Qt slider → `setManualSetpoint()` → `GuiManualDispatcher::setSetpoint()` → push to bounded queue → `GuiManualDispatcher` worker thread wakes immediately → setpoint built via `ManualImuCoordinator` and dispatched directly to `Kinematics3RRS`. Timing is driven by operator input rate, independent of camera frames.
+
+The control thread handles only the automatic path. It is not involved in either manual path.
+
+This staged structure is appropriate because the taught approach is event-driven userspace code built around callbacks, blocking waits, and clean class interfaces rather than polling loops or single-threaded delay-based control.
+
+---
+
+## Diagram 1 — UML Class Diagram
 
 ```mermaid
 classDiagram
@@ -529,6 +63,7 @@ class SystemManager {
   +exitManual() void
   +setManualSetpoint(tilt_rad, pan_rad) void
   +setTrackerThreshold(thr) void
+  +setManualCommandSource(src) void
   +registerFrameObserver(cb) void
   +registerEstimateObserver(cb) void
   +registerSetpointObserver(cb) void
@@ -537,9 +72,21 @@ class SystemManager {
   -onFrame_(fe) void
   -controlLoop_() void
   -actuatorLoop_() void
+  -setState_(s) void
   -applyNeutralOnce_() void
   -applyParkOnce_(servo_deg) void
-  -setState_(s) void
+}
+
+class BackendCoordinator {
+  +start(log) StartResult
+  +stop() void
+}
+
+class GuiManualDispatcher {
+  +start() void
+  +stop() void
+  +setSetpoint(tilt_rad, pan_rad) void
+  +registerSetpointObserver(cb) void
 }
 
 class ICamera {
@@ -598,6 +145,27 @@ class LatencyMonitor {
   +onActuate(frame_id, t) void
 }
 
+class ManualImuCoordinator {
+  +setManualCommandSource(src) void
+  +manualCommandSource() ManualCommandSource
+  +updateImuSample(sample) void
+  +applyImuCorrection(sp) PlatformSetpoint
+  +buildManualSetpointFromPot(sample, state, frame_id, t, sp) bool
+  +buildManualSetpointFromGui(tilt, pan, state, frame_id, t, sp) bool
+}
+
+class ADS1115ManualInput {
+  +registerCallback(cb) void
+  +start() bool
+  +stop() void
+}
+
+class Mpu6050Publisher {
+  +registerEventCallback(cb) void
+  +start() bool
+  +stop() void
+}
+
 SystemManager o-- ICamera
 SystemManager o-- SunTracker
 SystemManager o-- Controller
@@ -605,20 +173,28 @@ SystemManager o-- Kinematics3RRS
 SystemManager o-- ActuatorManager
 SystemManager o-- ServoDriver
 SystemManager o-- LatencyMonitor
+SystemManager o-- ManualImuCoordinator
+SystemManager o-- BackendCoordinator
+SystemManager o-- GuiManualDispatcher
+BackendCoordinator o-- ADS1115ManualInput
+SystemManager o-- Mpu6050Publisher
 
-SystemManager o-- ThreadSafeQueue~FrameEvent~ : frame_q_ cap=1
-SystemManager o-- ThreadSafeQueue~ActuatorCommand~ : cmd_q_ cap=1
+SystemManager o-- ThreadSafeQueue~FrameEvent~ : frame_q_ cap=2
+SystemManager o-- ThreadSafeQueue~ActuatorCommand~ : cmd_q_ cap=8
 
 ICamera ..> FrameEvent : emits via callback
 SunTracker ..> SunEstimate : emits via callback
 Controller ..> PlatformSetpoint : emits via callback
 Kinematics3RRS ..> ActuatorCommand : emits via callback
 ActuatorManager ..> ActuatorCommand : emits safe callback
+ADS1115ManualInput ..> ManualPotSample : emits via callback
+Mpu6050Publisher ..> ImuSample : emits via callback
+ManualImuCoordinator ..> PlatformSetpoint : adjusts / builds
 ```
 
 ---
 
-### 15.2 Sequence Diagram — Runtime Pipeline
+## Diagram 2.1 — Sequence Diagram — Automatic Runtime Pipeline
 
 ```mermaid
 sequenceDiagram
@@ -626,12 +202,13 @@ autonumber
 
 participant Cam as Camera backend
 participant SM as SystemManager
-participant FQ as FrameQueue cap=1
+participant FQ as FrameQueue cap=2
 participant CT as Control thread
 participant ST as SunTracker
 participant C as Controller
+participant MIC as ManualImuCoordinator
 participant K as Kinematics3RRS
-participant CQ as CommandQueue cap=1
+participant CQ as CommandQueue cap=8
 participant AT as Actuator thread
 participant AM as ActuatorManager
 participant SD as ServoDriver
@@ -644,6 +221,7 @@ SM->>K: registerCommandCallback(...)
 SM->>AM: registerSafeCommandCallback(...)
 SM->>SD: start()
 SM->>Cam: start()
+SM->>SM: setState(SEARCHING)
 
 Cam-->>SM: FrameCallback(FrameEvent)
 SM->>LM: onCapture(frame_id, t_capture)
@@ -656,11 +234,20 @@ CT->>ST: onFrame(FrameEvent)
 ST-->>CT: EstimateCallback(SunEstimate)
 CT->>LM: onEstimate(frame_id, t_estimate)
 
+alt confidence >= threshold
+  CT->>SM: setState(TRACKING)
+else confidence < threshold
+  CT->>SM: setState(SEARCHING)
+end
+
 CT->>C: onEstimate(SunEstimate)
 C-->>CT: SetpointCallback(PlatformSetpoint)
 CT->>LM: onControl(frame_id, t_control)
 
-CT->>K: onSetpoint(PlatformSetpoint)
+CT->>MIC: applyImuCorrection(PlatformSetpoint)
+MIC-->>CT: corrected PlatformSetpoint
+
+CT->>K: onSetpoint(corrected PlatformSetpoint)
 K-->>CT: CommandCallback(ActuatorCommand)
 CT->>CQ: push_latest(ActuatorCommand)
 
@@ -675,7 +262,76 @@ AT->>SD: apply(ActuatorCommand)
 
 ---
 
-### 15.3 Component Diagram
+## Diagram 2.2 — Sequence Diagram — Manual Input + IMU Update Paths
+
+```mermaid
+sequenceDiagram
+autonumber
+
+participant ADS as ADS1115ManualInput
+participant IMU as Mpu6050Publisher
+participant User as Qt / CLI User
+participant SM as SystemManager
+participant BC as BackendCoordinator
+participant GMD as GuiManualDispatcher
+participant MIC as ManualImuCoordinator
+participant K as Kinematics3RRS
+participant CQ as CommandQueue cap=8
+participant AT as Actuator thread
+participant AM as ActuatorManager
+participant SD as ServoDriver
+participant LM as LatencyMonitor
+
+Note over BC,ADS: BackendCoordinator owns ADS1115 and IMU lifecycle
+BC->>ADS: start()
+BC->>IMU: start()
+
+IMU-->>SM: IMU callback(sample)
+SM->>MIC: updateImuSample(sample)
+
+User->>SM: enterManual()
+SM->>MIC: setManualCommandSource(Pot or GUI)
+SM->>SM: setState(MANUAL)
+
+alt Pot-controlled manual mode — ADS1115 ALERT/RDY edge driven
+  ADS-->>SM: ManualPotSample callback
+  SM->>MIC: buildManualSetpointFromPot(sample, state, id, t, sp)
+  MIC-->>SM: PlatformSetpoint
+  SM->>MIC: applyImuCorrection(sp)
+  MIC-->>SM: corrected PlatformSetpoint
+  SM->>LM: onControl(frame_id, t_control)
+  SM->>K: onSetpoint(corrected PlatformSetpoint)
+  Note over SM,K: Dispatched directly in ADS1115 callback — no frame dependency
+else GUI-controlled manual mode — operator input rate driven
+  User->>SM: setManualSetpoint(tilt, pan)
+  SM->>GMD: setSetpoint(tilt, pan)
+  Note over GMD: push_latest to bounded queue — wakes immediately
+  GMD->>MIC: buildManualSetpointFromGui(tilt, pan, state, id, t, sp)
+  MIC-->>GMD: PlatformSetpoint
+  GMD->>MIC: applyImuCorrection(sp)
+  MIC-->>GMD: corrected PlatformSetpoint
+  GMD->>LM: onControl(frame_id, t_control)
+  GMD->>K: onSetpoint(corrected PlatformSetpoint)
+  Note over GMD,K: Dispatched from GuiManualDispatcher thread — no frame dependency
+end
+
+K-->>K: CommandCallback(ActuatorCommand)
+K->>CQ: push_latest(ActuatorCommand)
+
+AT->>CQ: wait_pop()
+CQ-->>AT: ActuatorCommand
+AT->>AM: onCommand(ActuatorCommand)
+AM-->>AT: SafeCommandCallback(ActuatorCommand)
+AT->>LM: onActuate(frame_id, t_actuate)
+AT->>SD: apply(ActuatorCommand)
+
+User->>SM: exitManual()
+SM->>SM: setState(SEARCHING)
+```
+
+---
+
+## Diagram 3 — Component Diagram
 
 ```mermaid
 flowchart LR
@@ -686,20 +342,31 @@ flowchart LR
 
   subgraph Core["Core Realtime Pipeline"]
     SM["SystemManager"]
-    FQ["FrameQueue cap=1<br/>ThreadSafeQueue&lt;FrameEvent&gt;"]
-    CQ["CommandQueue cap=1<br/>ThreadSafeQueue&lt;ActuatorCommand&gt;"]
+    FQ["FrameQueue cap=2<br/>ThreadSafeQueue&lt;FrameEvent&gt;"]
+    CQ["CommandQueue cap=8<br/>ThreadSafeQueue&lt;ActuatorCommand&gt;"]
     ST["SunTracker"]
     C["Controller"]
+    MIC["ManualImuCoordinator"]
     K["Kinematics3RRS"]
     AM["ActuatorManager"]
     SD["ServoDriver"]
     LM["LatencyMonitor"]
   end
 
-  subgraph CameraBackends["Camera Backends"]
+  subgraph Vision["Camera Backends"]
     ICam["ICamera"]
     Lib["LibcameraPublisher"]
     Sim["SimulatedPublisher"]
+  end
+
+  subgraph ManualInput["Manual Input"]
+    ADS["ADS1115ManualInput<br/>ALERT/RDY GPIO edge"]
+    GMD["GuiManualDispatcher<br/>dedicated thread + queue"]
+    BC["BackendCoordinator<br/>owns ADS1115 + IMU"]
+  end
+
+  subgraph ImuFeedback["IMU Feedback"]
+    MPU["Mpu6050Publisher"]
   end
 
   CLI --> SM
@@ -710,30 +377,140 @@ flowchart LR
   ICam -->|Frame callback| SM
 
   SM --> FQ
-  FQ -->|wait_pop| ST
+  FQ -->|wait_pop in control thread| ST
   ST --> C
-  C --> K
+  C --> MIC
+  MIC --> K
   K --> CQ
-  CQ -->|wait_pop| AM
+  CQ -->|wait_pop in actuator thread| AM
   AM --> SD
+
+  ADS -->|manual sample callback| SM
+  SM -->|dispatch direct to K| K
+  QT -->|setManualSetpoint| SM
+  SM -->|setSetpoint| GMD
+  GMD -->|dispatch direct to K| K
+  MPU -->|IMU callback| SM
+  SM --> MIC
 
   SM --> LM
 ```
 
 ---
 
-## 16) Summary
+## Diagram 4 — Threaded Event Architecture
 
-The current repository architecture is characterised by:
+```mermaid
+flowchart TB
+  CAM["Camera backend<br/>libcamera or simulated"]
+  ADS["ADS1115 manual input"]
+  MPU["MPU6050 IMU"]
+  UI["Qt / CLI manual input"]
 
-* a shared core pipeline reused by multiple application entry points
-* bounded blocking queues between major stages
-* backend abstraction for camera input
-* separated vision, control, kinematics, safety, and output modules
-* observer hooks for UI and telemetry
-* optional GUI and viewer layers kept outside the core processing architecture
+  subgraph T1["Callback / producer side"]
+    CAMCB["Frame callback"]
+    ADSCB["Manual sample callback"]
+    MPUCB["IMU callback"]
+    UICB["GUI / CLI target update"]
+  end
 
-The architecture is therefore best described as:
+  subgraph T2["Control thread — automatic path only"]
+    FQ["FrameQueue cap=2"]
+    ST["SunTracker"]
+    CTRL["Controller"]
+    MIC["ManualImuCoordinator"]
+    KIN["Kinematics3RRS"]
+    CQ["CommandQueue cap=8"]
+  end
 
-**event-driven, queue-based, modular, and multi-threaded**, with optional platform-specific backends and UI layers built around the same core system.
+  subgraph T4["Pot callback thread (ADS1115)"]
+    ADSCB2["onManualPotSample_()"]
+    POTK["→ Kinematics3RRS"]
+  end
 
+  subgraph T5["GuiManualDispatcher thread"]
+    GUIQ["GuiManualDispatcher queue"]
+    GUIK["→ Kinematics3RRS"]
+  end
+
+  subgraph T3["Actuator thread"]
+    ACT["ActuatorManager"]
+    SERVO["ServoDriver"]
+  end
+
+  CAM --> CAMCB --> FQ
+  FQ --> ST --> CTRL --> MIC --> KIN --> CQ
+  ADS --> ADSCB --> ADSCB2 --> POTK
+  UI --> UICB --> GUIQ --> GUIK
+  MPU --> MPUCB --> MIC
+  CQ --> ACT --> SERVO
+```
+
+---
+
+## Component Responsibilities
+
+### SystemManager
+
+Coordinates runtime execution, manages threads, processes incoming events, and controls system state. Manual timing is fully delegated: potentiometer commands dispatch directly from the ADS1115 callback, and GUI commands dispatch from `GuiManualDispatcher`. The control thread handles only the automatic pipeline.
+
+### BackendCoordinator
+
+Owns the lifecycle of optional hardware backends: ADS1115 manual input and MPU-6050/ICM-20600 IMU. Starts, stops, and owns I2C/GPIO resources independently of pipeline orchestration.
+
+### GuiManualDispatcher
+
+Owns a dedicated worker thread and bounded freshest-data queue for GUI manual setpoints. When `setManualSetpoint()` is called, the dispatcher wakes immediately and dispatches the setpoint to `Kinematics3RRS` without depending on camera-frame timing.
+
+### ICamera and Camera Backends
+
+Provide frame acquisition. Multiple implementations can be used without affecting downstream processing.
+
+### SunTracker
+
+Processes image data and produces a target estimate including position and confidence.
+
+### Controller
+
+Transforms the target estimate into a platform-level motion command.
+
+### ManualImuCoordinator
+
+Handles manual input ownership and optional IMU-based adjustments. It builds manual setpoints and applies IMU correction where allowed by mode/source policy.
+
+### Kinematics3RRS
+
+Maps platform motion commands into actuator-specific commands based on mechanism geometry.
+
+### ActuatorManager
+
+Applies conditioning to actuator commands such as clamping and rate limiting to ensure safe output.
+
+### ServoDriver and PCA9685
+
+Convert actuator commands into hardware signals and communicate with the PWM controller.
+
+### Input Devices
+
+- `ADS1115ManualInput` provides potentiometer-based manual control input
+- `Mpu6050Publisher` provides IMU data for orientation feedback
+
+---
+
+## Architectural Summary
+
+The system is built as a pipeline of independent processing stages connected through well-defined interfaces. Each stage transforms data and passes it forward without direct knowledge of internal details of other components.
+
+This structure enables:
+
+- predictable data flow
+- clear separation between computation and hardware access
+- safe multi-threaded execution
+- straightforward extension and modification of individual stages
+
+The inter-thread queues are intentionally bounded:
+
+- Frame queue capacity is small (2) to minimise latency and prevent stale frames accumulating.
+- Command queue capacity is larger (8) to absorb short bursts without dropping actuator updates prematurely.
+
+Both queues use a latest-wins policy, ensuring that the system prioritises current data while maintaining bounded memory and predictable behaviour.

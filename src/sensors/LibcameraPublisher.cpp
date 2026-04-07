@@ -1,6 +1,6 @@
-#if SOLAR_HAVE_LIBCAMERA
-
 #include "sensors/LibcameraPublisher.hpp"
+
+#if SOLAR_HAVE_LIBCAMERA
 
 #include <libcamera/camera.h>
 #include <libcamera/camera_manager.h>
@@ -27,9 +27,7 @@ namespace solar {
 namespace {
 
 /**
- * @brief RAII read-only mmap helper for dmabuf planes.
- *
- * Keeps all mmap/munmap handling local to this translation unit.
+ * @brief Read-only mmap helper for one dmabuf plane.
  */
 class MMapPlaneRO final {
 public:
@@ -41,29 +39,29 @@ public:
 
     MMapPlaneRO(MMapPlaneRO&& other) noexcept
         : base_(other.base_),
-          mapLen_(other.mapLen_),
+          map_len_(other.map_len_),
           delta_(other.delta_) {
         other.base_ = nullptr;
-        other.mapLen_ = 0;
-        other.delta_ = 0;
+        other.map_len_ = 0U;
+        other.delta_ = 0U;
     }
 
     MMapPlaneRO& operator=(MMapPlaneRO&& other) noexcept {
         if (this != &other) {
             reset();
             base_ = other.base_;
-            mapLen_ = other.mapLen_;
+            map_len_ = other.map_len_;
             delta_ = other.delta_;
             other.base_ = nullptr;
-            other.mapLen_ = 0;
-            other.delta_ = 0;
+            other.map_len_ = 0U;
+            other.delta_ = 0U;
         }
         return *this;
     }
 
     static MMapPlaneRO map(int fd, std::size_t length, std::size_t offset) {
         if (fd < 0 || length == 0U) {
-            throw std::runtime_error("MMapPlaneRO: invalid fd/length");
+            throw std::runtime_error("MMapPlaneRO: invalid fd or length");
         }
 
         const long page = ::sysconf(_SC_PAGESIZE);
@@ -71,105 +69,103 @@ public:
             throw std::runtime_error("MMapPlaneRO: sysconf(_SC_PAGESIZE) failed");
         }
 
-        const std::size_t pageSize = static_cast<std::size_t>(page);
-        const std::size_t alignedOffset = offset & ~(pageSize - 1U);
-        const std::size_t delta = offset - alignedOffset;
-        const std::size_t mapLen = length + delta;
+        const std::size_t page_size = static_cast<std::size_t>(page);
+        const std::size_t aligned_offset = offset & ~(page_size - 1U);
+        const std::size_t delta = offset - aligned_offset;
+        const std::size_t map_len = length + delta;
 
         void* mem = ::mmap(
             nullptr,
-            mapLen,
+            map_len,
             PROT_READ,
             MAP_SHARED,
             fd,
-            static_cast<off_t>(alignedOffset));
+            static_cast<off_t>(aligned_offset));
 
         if (mem == MAP_FAILED) {
             throw std::runtime_error("MMapPlaneRO: mmap failed");
         }
 
-        MMapPlaneRO r;
-        r.base_ = mem;
-        r.mapLen_ = mapLen;
-        r.delta_ = delta;
-        return r;
+        MMapPlaneRO out;
+        out.base_ = mem;
+        out.map_len_ = map_len;
+        out.delta_ = delta;
+        return out;
     }
 
     void reset() noexcept {
-        if (base_ && base_ != MAP_FAILED && mapLen_ > 0U) {
-            ::munmap(base_, mapLen_);
+        if (base_ && base_ != MAP_FAILED && map_len_ > 0U) {
+            ::munmap(base_, map_len_);
         }
         base_ = nullptr;
-        mapLen_ = 0U;
+        map_len_ = 0U;
         delta_ = 0U;
     }
 
-    [[nodiscard]] const uint8_t* ptr() const noexcept {
-        return static_cast<const uint8_t*>(base_) + delta_;
+    [[nodiscard]] const std::uint8_t* ptr() const noexcept {
+        return static_cast<const std::uint8_t*>(base_) + delta_;
     }
 
 private:
     void* base_{nullptr};
-    std::size_t mapLen_{0U};
+    std::size_t map_len_{0U};
     std::size_t delta_{0U};
 };
 
 /**
- * @brief Copy one plane into a packed destination buffer, respecting source stride.
- *
- * Destination layout is packed: rowBytes * rows.
+ * @brief Copy one plane into a packed destination buffer respecting source stride.
  */
-static void copyPlaneStrideAware(uint8_t* dst,
-                                 std::size_t dstSize,
-                                 int fd,
-                                 std::size_t length,
-                                 std::size_t offset,
-                                 int rowBytes,
-                                 int rows,
-                                 int strideBytes) {
+void copyPlaneStrideAware(std::uint8_t* dst,
+                          std::size_t dst_size,
+                          int fd,
+                          std::size_t length,
+                          std::size_t offset,
+                          int row_bytes,
+                          int rows,
+                          int stride_bytes) {
     if (!dst) {
-        throw std::runtime_error("copyPlaneStrideAware: dst null");
+        throw std::runtime_error("copyPlaneStrideAware: null destination");
     }
-    if (rowBytes <= 0 || rows <= 0 || strideBytes <= 0) {
+    if (row_bytes <= 0 || rows <= 0 || stride_bytes <= 0) {
         throw std::runtime_error("copyPlaneStrideAware: invalid dimensions");
     }
 
     const std::size_t needed =
-        static_cast<std::size_t>(rowBytes) * static_cast<std::size_t>(rows);
-    if (dstSize < needed) {
+        static_cast<std::size_t>(row_bytes) * static_cast<std::size_t>(rows);
+    if (dst_size < needed) {
         throw std::runtime_error("copyPlaneStrideAware: destination too small");
     }
 
     MMapPlaneRO map = MMapPlaneRO::map(fd, length, offset);
-    const uint8_t* src = map.ptr();
+    const std::uint8_t* src = map.ptr();
 
     for (int y = 0; y < rows; ++y) {
-        const std::size_t srcRow =
-            static_cast<std::size_t>(y) * static_cast<std::size_t>(strideBytes);
-        const std::size_t dstRow =
-            static_cast<std::size_t>(y) * static_cast<std::size_t>(rowBytes);
+        const std::size_t src_row =
+            static_cast<std::size_t>(y) * static_cast<std::size_t>(stride_bytes);
+        const std::size_t dst_row =
+            static_cast<std::size_t>(y) * static_cast<std::size_t>(row_bytes);
 
-        if (srcRow + static_cast<std::size_t>(rowBytes) > length) {
+        if (src_row + static_cast<std::size_t>(row_bytes) > length) {
             throw std::runtime_error("copyPlaneStrideAware: plane bounds exceeded");
         }
 
-        std::memcpy(dst + dstRow, src + srcRow, static_cast<std::size_t>(rowBytes));
+        std::memcpy(dst + dst_row, src + src_row, static_cast<std::size_t>(row_bytes));
     }
 }
 
 /**
- * @brief Compute a conservative stride estimate from plane size and row count.
+ * @brief Conservative stride estimate when libcamera plane metadata is limited.
  */
-static int strideFromPlane(const libcamera::FrameBuffer::Plane& p,
-                           int rows,
-                           int minRowBytes) {
+int strideFromPlane(const libcamera::FrameBuffer::Plane& p,
+                    int rows,
+                    int min_row_bytes) {
     if (rows <= 0) {
-        return minRowBytes;
+        return min_row_bytes;
     }
 
     int stride = static_cast<int>(p.length / static_cast<std::size_t>(rows));
-    if (stride < minRowBytes) {
-        stride = minRowBytes;
+    if (stride < min_row_bytes) {
+        stride = min_row_bytes;
     }
     return stride;
 }
@@ -177,18 +173,21 @@ static int strideFromPlane(const libcamera::FrameBuffer::Plane& p,
 } // namespace
 
 LibcameraPublisher::LibcameraPublisher(Logger& log, Config cfg)
-    : log_(log), cfg_(std::move(cfg)) {}
+    : log_(log),
+      cfg_(std::move(cfg)) {
+}
 
 LibcameraPublisher::~LibcameraPublisher() {
     stop();
 }
 
 void LibcameraPublisher::registerFrameCallback(FrameCallback cb) {
-    std::lock_guard<std::mutex> lock(cbMutex_);
-    frameCb_ = std::move(cb);
+    std::lock_guard<std::mutex> lock(cb_mutex_);
+    frame_cb_ = std::move(cb);
 }
 
 bool LibcameraPublisher::start() {
+    // Libcamera drives frame delivery through callbacks; there is no polling loop here.
     if (running_) {
         return true;
     }
@@ -198,7 +197,7 @@ bool LibcameraPublisher::start() {
         thread_ = std::thread(&LibcameraPublisher::run_, this);
     } catch (...) {
         running_ = false;
-        log_.error("LibcameraPublisher: failed to start thread");
+        log_.error("LibcameraPublisher: failed to start worker thread");
         return false;
     }
 
@@ -212,7 +211,7 @@ void LibcameraPublisher::stop() {
     }
 
     running_ = false;
-    runCv_.notify_all();
+    run_cv_.notify_all();
 
     if (thread_.joinable()) {
         thread_.join();
@@ -230,7 +229,7 @@ LibcameraPublisher::Config LibcameraPublisher::config() const {
 }
 
 void LibcameraPublisher::run_() {
-    log_.info("LibcameraPublisher: libcamera thread starting");
+    log_.info("LibcameraPublisher: worker thread starting");
 
     auto cm = std::make_unique<libcamera::CameraManager>();
     if (cm->start() < 0) {
@@ -256,7 +255,7 @@ void LibcameraPublisher::run_() {
             }
         }
         if (!cam) {
-            log_.warn("LibcameraPublisher: camera_id not found; using first camera");
+            log_.warn("LibcameraPublisher: requested camera_id not found; using first camera");
             cam = cm->cameras().front();
         }
     } else {
@@ -270,8 +269,8 @@ void LibcameraPublisher::run_() {
         return;
     }
 
-    auto camCfg = cam->generateConfiguration({libcamera::StreamRole::Viewfinder});
-    if (!camCfg || camCfg->empty()) {
+    auto cam_cfg = cam->generateConfiguration({libcamera::StreamRole::Viewfinder});
+    if (!cam_cfg || cam_cfg->empty()) {
         log_.error("LibcameraPublisher: generateConfiguration failed");
         cam->release();
         cm->stop();
@@ -279,15 +278,12 @@ void LibcameraPublisher::run_() {
         return;
     }
 
-    libcamera::StreamConfiguration& sc = camCfg->at(0);
+    libcamera::StreamConfiguration& sc = cam_cfg->at(0);
     sc.size.width = static_cast<unsigned int>(cfg_.width);
     sc.size.height = static_cast<unsigned int>(cfg_.height);
-
-    // Keep capture efficient on Raspberry Pi and convert to Gray8 at the FrameEvent boundary
-    // by copying only the Y plane into a packed grayscale buffer.
     sc.pixelFormat = libcamera::formats::YUV420;
 
-    if (camCfg->validate() == libcamera::CameraConfiguration::Invalid) {
+    if (cam_cfg->validate() == libcamera::CameraConfiguration::Invalid) {
         log_.error("LibcameraPublisher: configuration invalid");
         cam->release();
         cm->stop();
@@ -295,7 +291,7 @@ void LibcameraPublisher::run_() {
         return;
     }
 
-    if (cam->configure(camCfg.get()) < 0) {
+    if (cam->configure(cam_cfg.get()) < 0) {
         log_.error("LibcameraPublisher: configure failed");
         cam->release();
         cm->stop();
@@ -305,7 +301,7 @@ void LibcameraPublisher::run_() {
 
     libcamera::Stream* stream = sc.stream();
     if (!stream) {
-        log_.error("LibcameraPublisher: stream is null");
+        log_.error("LibcameraPublisher: null stream");
         cam->release();
         cm->stop();
         running_ = false;
@@ -353,8 +349,8 @@ void LibcameraPublisher::run_() {
             return;
         }
 
-        FrameEvent fe;
-        fe.frame_id = frameId_.fetch_add(1) + 1U;
+        FrameEvent fe{};
+        fe.frame_id = frame_id_.fetch_add(1U) + 1U;
         fe.t_capture = std::chrono::steady_clock::now();
         fe.width = cfg_.width;
         fe.height = cfg_.height;
@@ -364,31 +360,31 @@ void LibcameraPublisher::run_() {
         try {
             const int w = cfg_.width;
             const int h = cfg_.height;
-            const std::size_t ySize =
+            const std::size_t y_size =
                 static_cast<std::size_t>(w) * static_cast<std::size_t>(h);
 
-            fe.data.resize(ySize);
+            fe.data.resize(y_size);
 
-            const auto& pY = fb->planes()[0];
-            const int strideY = strideFromPlane(pY, h, w);
+            const auto& p_y = fb->planes()[0];
+            const int stride_y = strideFromPlane(p_y, h, w);
 
             copyPlaneStrideAware(
                 fe.data.data(),
                 fe.data.size(),
-                pY.fd.get(),
-                pY.length,
-                pY.offset,
+                p_y.fd.get(),
+                p_y.length,
+                p_y.offset,
                 w,
                 h,
-                strideY);
+                stride_y);
 
-            FrameCallback cbCopy;
+            FrameCallback cb_copy;
             {
-                std::lock_guard<std::mutex> lock(cbMutex_);
-                cbCopy = frameCb_;
+                std::lock_guard<std::mutex> lock(cb_mutex_);
+                cb_copy = frame_cb_;
             }
-            if (cbCopy) {
-                cbCopy(fe);
+            if (cb_copy) {
+                cb_copy(fe);
             }
         } catch (const std::exception& e) {
             log_.error(std::string("LibcameraPublisher: frame copy failed: ") + e.what());
@@ -438,9 +434,16 @@ void LibcameraPublisher::run_() {
 
     log_.info("LibcameraPublisher: streaming started");
 
+    // libcamera delivers frames asynchronously through its own internal event
+    // loop via the requestCompleted signal connected above. This worker thread
+    // does not need to poll or block on a file descriptor to receive frames;
+    // instead it parks here on a condition variable and keeps the camera
+    // manager alive until stop() signals shutdown. This is the integration
+    // model prescribed by the libcamera API and by the libcamera2opencv
+    // wrapper that is used as the primary camera backend.
     {
-        std::unique_lock<std::mutex> lk(runMutex_);
-        runCv_.wait(lk, [this] { return !running_.load(); });
+        std::unique_lock<std::mutex> lk(run_mutex_);
+        run_cv_.wait(lk, [this] { return !running_.load(); });
     }
 
     cam->stop();
@@ -448,7 +451,7 @@ void LibcameraPublisher::run_() {
     cam->release();
     cm->stop();
 
-    log_.info("LibcameraPublisher: libcamera thread exiting");
+    log_.info("LibcameraPublisher: worker thread exiting");
 }
 
 } // namespace solar

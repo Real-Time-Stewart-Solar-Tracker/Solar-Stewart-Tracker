@@ -1,157 +1,144 @@
 # System State Machine
 
-This document defines the runtime behaviour of the Solar Stewart Tracker as a state machine.
-
-It describes the current implemented state flow of the system.
+This document defines the runtime behaviour of the system as a state machine. It describes the implemented execution flow, including all states, transitions, and operational behaviour.
 
 ---
 
 ## 1. States
 
 | State | Meaning | Outputs |
-|------|---------|---------|
+|---|---|---|
 | IDLE | System not running | No motion |
 | STARTUP | Initialisation in progress | Startup sequence in progress |
 | NEUTRAL | Transitional safe positioning state | Configured startup park applied |
-| SEARCHING | Sun not confidently detected | Frame-driven processing continues with safe low-motion behaviour |
-| TRACKING | Sun detected with sufficient confidence | Normal closed-loop updates |
-| MANUAL | User controls setpoint | Manual setpoint → kinematics → actuator path, bounded by limits |
-| STOPPING | Shutdown in progress | Stop sequence in progress |
-| FAULT | Failure state | Outputs stopped / system held in faulted state |
+| SEARCHING | Target not confidently detected | Continuous automatic processing with safe behaviour |
+| TRACKING | Target detected with sufficient confidence | Normal closed-loop automatic updates |
+| MANUAL | User controls setpoint | Manual target is applied continuously through the control thread |
+| STOPPING | Shutdown in progress | Controlled stop sequence |
+| FAULT | Failure state | Outputs stopped or held safe |
 
 ---
 
 ## 2. Transition Rules
 
 | From | To | Trigger |
-|------|----|---------|
-| IDLE | STARTUP | `SystemManager::start()` called |
-| STARTUP | FAULT | camera is null, driver start fails, or camera start fails |
-| STARTUP | NEUTRAL | startup sequence completes successfully |
-| NEUTRAL | SEARCHING | startup park applied and system enters normal searching mode |
-| SEARCHING | TRACKING | `SunEstimate.confidence >= min_confidence` |
-| TRACKING | SEARCHING | `SunEstimate.confidence < min_confidence` |
+|---|---|---|
+| IDLE | STARTUP | `start()` called |
+| STARTUP | FAULT | camera null, driver start failure, manual backend failure, or camera start failure |
+| STARTUP | NEUTRAL | successful initialisation |
+| NEUTRAL | SEARCHING | startup park applied and `startup_mode == Auto` |
+| NEUTRAL | MANUAL | startup park applied and `startup_mode == Manual` |
+| SEARCHING | TRACKING | confidence ≥ threshold |
+| TRACKING | SEARCHING | confidence < threshold |
 | SEARCHING | MANUAL | `enterManual()` |
 | TRACKING | MANUAL | `enterManual()` |
-| NEUTRAL | MANUAL | `enterManual()` if invoked while running in that transitional state |
+| NEUTRAL | MANUAL | `enterManual()` |
 | MANUAL | SEARCHING | `exitManual()` |
 | SEARCHING | STOPPING | `stop()` called |
 | TRACKING | STOPPING | `stop()` called |
 | MANUAL | STOPPING | `stop()` called |
 | NEUTRAL | STOPPING | `stop()` called |
-| STARTUP | STOPPING | `stop()` called during running startup path |
+| STARTUP | STOPPING | `stop()` during startup |
 | FAULT | STOPPING | `stop()` called |
-| STOPPING | IDLE | stop sequence completes |
-| SEARCHING | FAULT | critical runtime failure surfaced |
-| TRACKING | FAULT | critical runtime failure surfaced |
-| MANUAL | FAULT | critical runtime failure surfaced |
-| NEUTRAL | FAULT | critical runtime failure surfaced |
-
-The implemented reacquisition behaviour is the simplified transition:
-
-`TRACKING ↔ SEARCHING`
-
-based on the confidence threshold.
-
-There is no separate `REACQUIRE` state in the current implementation.
+| STOPPING | IDLE | shutdown complete |
+| ANY ACTIVE STATE | FAULT | critical runtime failure |
 
 ---
 
-## 3. State descriptions
+## 3. State Descriptions
 
 ### IDLE
 
-The system is not running.
+The system is inactive.
 
-Characteristics:
-- camera is not streaming
+- camera is not running
 - worker threads are not active
-- no new motion commands are produced
+- no actuator commands are produced
 
 ### STARTUP
 
-The system is performing startup actions.
+Initialisation phase.
 
-Characteristics:
-- `running_` becomes true
-- camera validity is checked
-- servo driver start is attempted
-- queues are reset
-- control and actuator threads are started
-- camera start is attempted
-- startup failure causes transition to `FAULT`
+- system marked as running
+- camera null check performed
+- actuator driver started
+- queues reset
+- worker threads started
+- backend coordinator started
+- camera streaming started
+- failures lead to FAULT
 
 ### NEUTRAL
 
-`NEUTRAL` is a short transitional state used during startup.
+Short transitional state.
 
-Characteristics:
-- the system applies the configured startup park angles using `applyParkOnce_(startup_park_deg_)`
-- this is a direct actuator park command
-- it is not a kinematic solve for tilt = 0 and pan = 0
-- after this step, the system proceeds to `SEARCHING`
+- startup park is applied using predefined actuator values
+- transitions to SEARCHING (default) or MANUAL (if `startup_mode == Manual`)
 
 ### SEARCHING
 
-The system is running but the sun is not currently detected with sufficient confidence.
+System is active but target confidence is low.
 
-Characteristics:
-- frames continue to be processed
-- `SunTracker`, `Controller`, `Kinematics3RRS`, `ActuatorManager`, and `ServoDriver` remain active
-- automatic processing is allowed in this state
-- if confidence rises sufficiently, the system transitions to `TRACKING`
+- frames are processed continuously
+- full automatic pipeline remains active
+- motion remains bounded
+- transitions to TRACKING when confidence increases
 
 ### TRACKING
 
-The system is confidently tracking the target.
+System operates in closed-loop tracking mode.
 
-Characteristics:
-- each incoming frame drives the normal event-driven update path
-- controller, kinematics, actuator shaping, and servo output are active
-- if confidence drops below threshold, the system transitions back to `SEARCHING`
+- each frame triggers full automatic processing path
+- controller, correction, kinematics, and actuator stages are active
+- continuous actuator updates
+- transitions back to SEARCHING if confidence drops
 
 ### MANUAL
 
-The user directly commands motion through the manual path.
+User-controlled mode.
 
-Characteristics:
-- `enterManual()` sets the state to `MANUAL`
-- automatic frame-driven control updates do not propagate through `controller_.onEstimate()` because auto processing is only allowed in `SEARCHING` and `TRACKING`
-- `setManualSetpoint()` creates a bounded synthetic `PlatformSetpoint`
-- manual setpoints still pass through kinematics, actuator shaping, and servo output
-- `exitManual()` returns the system to `SEARCHING`
+- activated via `enterManual()` or by `startup_mode == Manual`
+- automatic controller updates are disabled
+- the control thread handles only the automatic pipeline — it is **not involved** in manual mode dispatch
+
+**Pot-driven manual (`ManualCommandSource::Pot`):**
+- ADS1115 ALERT/RDY GPIO edge fires → `onManualPotSample_()` callback in the ADS1115 thread
+- setpoint built via `ManualImuCoordinator` and dispatched **directly** to `Kinematics3RRS`
+- timing is driven by the ADS1115 conversion rate — independent of camera frames
+
+**GUI-driven manual (`ManualCommandSource::Gui`):**
+- `setManualSetpoint()` → `GuiManualDispatcher::setSetpoint()` → push to bounded queue
+- `GuiManualDispatcher` worker thread wakes **immediately** and dispatches directly to `Kinematics3RRS`
+- timing is driven by operator input rate — independent of camera frames
+
+Both paths use the same downstream `Kinematics3RRS → ActuatorManager → ServoDriver` pipeline.
+
+IMU correction is applied via `ManualImuCoordinator::applyImuCorrection()` in both paths.
 
 ### STOPPING
 
-The system is shutting down.
+Shutdown sequence.
 
-Characteristics:
-- `running_` becomes false
-- camera is stopped
-- frame queue is stopped and control thread is joined
-- command queue is cleared and reset
-- `applyNeutralOnce_()` sends a zero tilt/pan setpoint through kinematics before final shutdown
-- command queue is then stopped and actuator thread is joined
-- driver is stopped
-- latency summary is printed
-- final state becomes `IDLE`
+- system marked as not running
+- camera stopped
+- backend coordinator stopped
+- frame and command queues stopped
+- processing threads joined
+- neutral command applied
+- driver stopped
+- transitions to IDLE
 
 ### FAULT
 
-The system has entered a faulted state because a critical condition was detected.
+Failure state.
 
-Characteristics:
-- startup failures can enter `FAULT`
-- degraded or invalid kinematics output causes:
-  - log error
-  - `setState_(TrackerState::FAULT)`
-  - no command queued for actuation
-- there is no explicit internal reset/restart transition
-- shutdown from `FAULT` occurs only through `stop()`
+- triggered by null camera, driver failure, backend failure, camera start failure, or invalid kinematics result
+- actuator commands are halted or suppressed
+- system requires explicit stop to recover
 
 ---
 
-## 4. Mermaid Diagram 1 — Overall Runtime State Graph
+## 4. Runtime State Graph
 
 ```mermaid
 stateDiagram-v2
@@ -159,121 +146,184 @@ stateDiagram-v2
 
     IDLE --> STARTUP: start()
 
-    STARTUP --> NEUTRAL: driver + camera started
-    STARTUP --> FAULT: null camera / driver start fail / camera start fail
+    STARTUP --> NEUTRAL
+    STARTUP --> FAULT
 
-    NEUTRAL --> SEARCHING: startup park applied
+    NEUTRAL --> SEARCHING: startup_mode == Auto
+    NEUTRAL --> MANUAL: startup_mode == Manual
 
-    SEARCHING --> TRACKING: confidence >= threshold
-    TRACKING --> SEARCHING: confidence < threshold
+    SEARCHING --> TRACKING
+    TRACKING --> SEARCHING
 
-    SEARCHING --> MANUAL: enterManual()
-    TRACKING --> MANUAL: enterManual()
-    NEUTRAL --> MANUAL: enterManual()
+    SEARCHING --> MANUAL
+    TRACKING --> MANUAL
+    NEUTRAL --> MANUAL
 
-    MANUAL --> SEARCHING: exitManual()
+    MANUAL --> SEARCHING
 
-    SEARCHING --> FAULT: critical runtime failure
-    TRACKING --> FAULT: critical runtime failure
-    MANUAL --> FAULT: critical runtime failure
-    NEUTRAL --> FAULT: critical runtime failure
+    SEARCHING --> FAULT
+    TRACKING --> FAULT
+    MANUAL --> FAULT
+    NEUTRAL --> FAULT
 
-    STARTUP --> STOPPING: stop()
-    NEUTRAL --> STOPPING: stop()
-    SEARCHING --> STOPPING: stop()
-    TRACKING --> STOPPING: stop()
-    MANUAL --> STOPPING: stop()
-    FAULT --> STOPPING: stop()
+    STARTUP --> STOPPING
+    NEUTRAL --> STOPPING
+    SEARCHING --> STOPPING
+    TRACKING --> STOPPING
+    MANUAL --> STOPPING
+    FAULT --> STOPPING
 
-    STOPPING --> IDLE: shutdown complete
-````
-
----
-
-## 5. Mermaid Diagram 2 — Startup and Shutdown Path
-
-```mermaid
-flowchart TD
-    A["start()"] --> B["set state STARTUP"]
-    B --> C{"camera_ valid?"}
-    C -- "no" --> F1["set FAULT and return false"]
-    C -- "yes" --> D{"driver_.start()?"}
-    D -- "no" --> F2["set FAULT and return false"]
-    D -- "yes" --> E["reset frame and command queues"]
-    E --> G["start control_thread_ and actuator_thread_"]
-    G --> H{"camera_->start()?"}
-    H -- "no" --> F3["stop queues and join threads"]
-    F3 --> F4["driver_.stop()"]
-    F4 --> F5["set FAULT and return false"]
-
-    H -- "yes" --> I["set state NEUTRAL"]
-    I --> J["applyParkOnce startup_park_deg_"]
-    J --> K["set state SEARCHING"]
-    K --> L["start returns true"]
-
-    M["stop()"] --> N["set state STOPPING"]
-    N --> O["camera_->stop()"]
-    O --> P["frame_q_.stop and join control thread"]
-    P --> Q["cmd_q_.clear and reset"]
-    Q --> R["applyNeutralOnce"]
-    R --> S["cmd_q_.stop and join actuator thread"]
-    S --> T["driver_.stop()"]
-    T --> U["latency_.printSummary()"]
-    U --> V["set state IDLE"]
+    STOPPING --> IDLE
 ```
 
 ---
 
-## 6. Mermaid Diagram 3 — Automatic Processing vs Manual Processing
+## 5. Startup and Shutdown Flow
 
 ```mermaid
 flowchart TD
-    A[FrameEvent callback onFrame_] --> B[frame_q_.push_latest]
-    B --> C[controlLoop wait_pop]
-    C --> D[tracker_.onFrame]
-    D --> E[SunEstimate callback]
+    A["start()"] --> B["set STARTUP"]
+    B --> C{"camera null?"}
+    C -- yes --> F1["set FAULT"]
 
-    E --> F{state is SEARCHING or TRACKING?}
-    F -- no --> G[do not call controller_.onEstimate]
-    F -- yes --> H[set state by confidence]
-    H --> I{confidence >= min_confidence?}
-    I -- yes --> J[TRACKING]
-    I -- no --> K[SEARCHING]
-    J --> L[controller_.onEstimate]
+    C -- no --> D{"driver start ok?"}
+    D -- no --> F2["set FAULT"]
+
+    D -- yes --> E["reset queues / reset manual state"]
+    E --> G["start worker threads + GuiManualDispatcher"]
+
+    G --> H{"backends start ok?"}
+    H -- fail --> F3["stop and set FAULT"]
+
+    H -- ok --> I{"camera start ok?"}
+    I -- no --> F4["stop and set FAULT"]
+
+    I -- yes --> J["set NEUTRAL"]
+    J --> K["apply startup park"]
+
+    K --> L{"startup_mode?"}
+    L -- Manual --> M["set MANUAL"]
+    L -- Auto --> N["set SEARCHING"]
+
+    O["stop()"] --> P["set STOPPING"]
+    P --> Q["camera stop"]
+    Q --> R["backends stop"]
+    R --> R2["stop GuiManualDispatcher"]
+    R2 --> S["stop queues and join threads"]
+    S --> T["apply neutral command"]
+    T --> U["driver stop"]
+    U --> W["set IDLE"]
+```
+
+---
+
+## 6. Automatic vs Manual Processing
+
+```mermaid
+---
+config:
+  layout: dagre
+---
+flowchart TB
+ subgraph COL1["Automatic path — control thread"]
+    direction TB
+        A1["Frame event"]
+        A2["frame_q_.push_latest"]
+        A3["control thread
+wait_pop"]
+        A4{"state?"}
+        A5["SunTracker.onFrame"]
+        A6["Controller.onEstimate"]
+        A7["applyImuCorrection"]
+        AO(["setpoint"])
+        AX["drain — no processing"]
+  end
+ subgraph COL2["Pot manual path — ADS1115 callback thread"]
+    direction TB
+        B1["ADS1115 ALERT/RDY
+GPIO edge"]
+        B2["onManualPotSample_"]
+        B3{"state==MANUAL
+source==Pot?"}
+        B4["buildManualSetpointFromPot"]
+        B5["applyImuCorrection"]
+        BO(["setpoint"])
+        BX["discard"]
+  end
+ subgraph COL3["GUI manual path — GuiManualDispatcher thread"]
+    direction TB
+        C1["setManualSetpoint called"]
+        C2["GuiManualDispatcher
+.setSetpoint"]
+        C3["push_latest to
+bounded queue"]
+        C4["worker thread
+wakes immediately"]
+        C5{"state==MANUAL
+source==Gui?"}
+        C6["buildManualSetpointFromGui"]
+        C7["applyImuCorrection"]
+        CO(["setpoint"])
+        CX["discard"]
+  end
+ subgraph ACT["Actuator path — actuator thread"]
+    direction TB
+        J["cmd_q_.push_latest"]
+        K["actuator thread
+wait_pop"]
+        L["ActuatorManager.onCommand"]
+        M["ServoDriver.apply"]
+  end
+    A1 --> A2
+    A2 --> A3
+    A3 --> A4
+    A4 -- SEARCHING
+TRACKING --> A5
+    A5 --> A6
+    A6 --> A7
+    A7 --> AO
+    A4 -- MANUAL
+FAULT --> AX
+    B1 --> B2
+    B2 --> B3
+    B3 -- yes --> B4
+    B4 --> B5
+    B5 --> BO
+    B3 -- no --> BX
+    C1 --> C2
+    C2 --> C3
+    C3 --> C4
+    C4 --> C5
+    C5 -- yes --> C6
+    C6 --> C7
+    C7 --> CO
+    C5 -- no --> CX
+    AO --> KIN["⚙️  Kinematics3RRS.onSetpoint"]
+    BO --> KIN
+    CO --> KIN
+    J --> K
     K --> L
-    L --> M[kinematics_.onSetpoint]
-    M --> N{cmd.status == Ok?}
-    N -- no --> O[log error and set FAULT]
-    N -- yes --> P[cmd_q_.push_latest]
-    P --> Q[actuatorLoop wait_pop]
-    Q --> R[actuatorMgr_.onCommand]
-    R --> S[driver_.apply]
+    L --> M
+    KIN --> J
 
-    T[enterManual] --> U[set state MANUAL]
-    U --> V[setManualSetpoint]
-    V --> W[clamp tilt and pan]
-    W --> X[synthetic PlatformSetpoint]
-    X --> M
-
-    Y[exitManual] --> Z[set state SEARCHING]
+     KIN:::shared
+    classDef path fill:#f0f4ff,stroke:#6677aa,stroke-width:1.5px
+    classDef shared fill:#fff8e1,stroke:#e6a800,stroke-width:2px
+    classDef actuator fill:#f0fff4,stroke:#44aa66,stroke-width:1.5px
+    classDef decision fill:#fff,stroke:#333,stroke-width:1.5px
+    classDef discard fill:#fff0f0,stroke:#cc6666,stroke-width:1px
 ```
 
 ---
 
-## 7. Important implementation notes
+## 7. Implementation Notes
 
-* `NEUTRAL` at startup is implemented as a **servo park command**, not as a kinematic neutral solve.
-* `applyNeutralOnce_()` is used during `STOPPING`, not during startup.
-* Automatic frame-driven control updates only run when the state is:
-
-  * `SEARCHING`
-  * `TRACKING`
-* Manual setpoints bypass the automatic controller path but still go through:
-
-  * `Kinematics3RRS`
-  * `ActuatorManager`
-  * `ServoDriver`
-* Invalid or degraded kinematics commands do not continue to actuation; they trigger `FAULT`.
-* There is no separate `REACQUIRE` state.
-* There is no explicit `FAULT -> IDLE` reset transition inside the current implementation.
-
+- automatic processing runs only in SEARCHING and TRACKING
+- the control thread handles only the automatic path — it is not involved in manual dispatch
+- pot manual commands are event-driven from the ADS1115 ALERT/RDY GPIO edge
+- GUI manual commands are event-driven from the `GuiManualDispatcher` worker thread
+- both manual paths dispatch directly to `Kinematics3RRS` without camera-frame dependency
+- GUI manual mode does not use Qt timers as a control timing source
+- invalid kinematic results prevent actuation and trigger FAULT
+- state transitions are explicit and centrally controlled in `SystemManager`
+- `BackendCoordinator` starts and stops ADS1115 and IMU backends during STARTUP and STOPPING

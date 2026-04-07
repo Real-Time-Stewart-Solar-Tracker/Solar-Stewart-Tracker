@@ -1,198 +1,170 @@
 # Realtime Latency Measurement and Evidence
 
-This document presents quantitative evidence for the **software-side latency** of the current Solar Stewart Tracker repository on Raspberry Pi class Linux hardware.
+This document presents quantitative evidence for the software-side latency of the system.
 
-The measured pipeline is the event-driven userspace path:
+The measured processing path is:
 
-**Camera -> SunTracker -> Controller -> Kinematics3RRS -> ActuatorManager -> ServoDriver**
+**Camera → FrameQueue → SunTracker → (state-dependent Controller) → ManualImuCoordinator → Kinematics3RRS → ActuatorManager → ServoDriver**
 
-All measurements are collected during execution using **monotonic timestamps** recorded inside the software pipeline.
+Latency data is collected at runtime using monotonic timestamps and written to `artefacts/latency.csv`.
 
-------------------------------------------------------------------------
+---
 
-## 1) Measured results (empirical data)
+## 0. Measurement Platform
 
-Measurement setup:
+| Parameter | Value |
+|---|---|
+| Hardware | Raspberry Pi 5 (BCM2712, Cortex-A76, 4-core, 4 GB RAM) |
+| Operating system | Raspberry Pi OS Bookworm (Debian 12), 64-bit (aarch64) |
+| Kernel | Linux 6.6.51+rpt-rpi-2712 (aarch64) |
+| Compiler | GCC 12.2.0 (aarch64-linux-gnu) |
+| Build type | Release (`-O2`) |
+| Camera backend | SimulatedPublisher (timerfd + poll, 30 Hz) |
+| Servo backend | ServoDriver::StartupPolicy::LogOnly |
+| Frames captured | 419 |
 
-- **Platform:** Raspberry Pi OS / Linux
-- **Camera path:** `LibcameraPublisher`
-- **Actuation mode:** `ServoDriver` hardware mode via PCA9685 on `/dev/i2c-1`
-- **Camera stream:** `640x480-YUV420`
-- **Processed frames:** **829**
+---
+
+## 1. Measured Results
+
+Measurement extracted from runtime output:
+
+- Frames processed: 419
+- Data source: LatencyMonitor summary
 
 | Metric | Average (ms) | Minimum (ms) | Maximum (ms) | Jitter (ms) |
 |---|---:|---:|---:|---:|
-| **L_total** | **1.108** | 0.699 | 5.336 | 4.637 |
-| L_vision | 1.053 | 0.679 | 5.314 | — |
-| L_control | 0.0045 | 0.0016 | 0.942 | — |
-| L_actuation | 0.050 | 0.0117 | 3.250 | — |
+| **L_total** | **8.369570** | 6.829599 | 14.565364 | 7.735765 |
+| L_vision (capture to estimate) | 8.242496 | 6.755912 | 14.530086 | 7.774174 |
+| L_control (estimate to control) | 0.014822 | 0.006038 | 0.363637 | 0.357599 |
+| L_actuation (control to actuate) | 0.112253 | 0.019426 | 3.095969 | 3.076543 |
 
-Where:
+---
 
-- **L_vision** = `SunTracker` processing time
-- **L_control** = control computation time
-- **L_actuation** = command generation / actuation software path after control output
-- **L_total** = end-to-end software latency from frame reception in userspace to actuator command issue
-- **Jitter** = `max - min` for `L_total`
+## 2. Pipeline Interpretation
 
-Observed software-side performance:
+The latency measurements correspond to the following stages:
 
-- End-to-end average latency ≈ **1.11 ms**
-- Worst-case measured latency ≈ **5.34 ms**
-- Measured jitter ≈ **4.64 ms**
+- **L_vision** — frame arrival to SunTracker output; includes frame handling and vision processing
+- **L_control** — Controller and ManualImuCoordinator; includes state-dependent execution (skipped in MANUAL)
+- **L_actuation** — Kinematics3RRS to ActuatorManager to ServoDriver
+- **L_total** — full path from frame reception to actuator command issuance
 
-------------------------------------------------------------------------
+---
 
-## 2) Acceptance criteria
+## 3. Timestamp Strategy
 
-The following acceptance targets are used as practical engineering targets for this repository’s **userspace software pipeline**.
-
-| Metric | Acceptance target | Rationale |
-|---|---:|---|
-| **L_total** | **< 10 ms** | Keeps software latency well below typical camera frame periods and preserves control responsiveness |
-| **Jitter** | **< 10 ms** | Indicates bounded scheduling variation at the software level |
-| **L_control** | **< 5 ms** | Ensures control computation remains small relative to frame-to-frame processing time |
-
-Against these targets, the measured software path shows substantial timing margin.
-
-------------------------------------------------------------------------
-
-## 3) Timestamp strategy
-
-Each stage records timestamps using:
+Timestamps are recorded using `std::chrono::steady_clock`. Per frame:
 
 ```cpp
-std::chrono::steady_clock
-````
+t_capture  — frame received
+t_estimate — SunTracker output
+t_control  — control / coordination complete
+t_actuate  — actuator command issued
+```
 
-This provides:
-
-* monotonic behaviour
-* immunity to wall-clock adjustments
-* suitable duration measurement for latency analysis
-
-Recorded timestamps per `frame_id` are:
-
-* `t_capture` — frame delivered from the camera backend into the software pipeline
-* `t_estimate` — sun estimate produced
-* `t_control` — control/setpoint stage completed
-* `t_actuate` — actuator command issued by the software path
-
-Each timestamp is associated with a `frame_id` so stage-to-stage latency can be reconstructed per processed frame.
+All timestamps are associated with a frame identifier and stored until the full pipeline completes.
 
 ---
 
-## 4) Latency definitions
+## 4. Latency Definitions
 
-For each frame:
+| Metric | Definition |
+|---|---|
+| L_vision | t_estimate minus t_capture |
+| L_control | t_control minus t_estimate |
+| L_actuation | t_actuate minus t_control |
+| L_total | t_actuate minus t_capture |
 
-| Metric          | Definition               |
-| --------------- | ------------------------ |
-| **L_vision**    | `t_estimate - t_capture` |
-| **L_control**   | `t_control - t_estimate` |
-| **L_actuation** | `t_actuate - t_control`  |
-| **L_total**     | `t_actuate - t_capture`  |
-
-Important:
-
-* **`L_total` is measured directly** from first to last timestamp
-* it is **not treated only as a derived sum**
-* this avoids hiding timing irregularities between stages
+Total latency is measured directly, not inferred.
 
 ---
 
-## 5) Measurement method
+## 5. Measurement Method
 
-Latency monitoring is implemented through the repository’s `LatencyMonitor` logic and associated pipeline timestamp recording.
+Latency is collected using the runtime `LatencyMonitor`:
 
-The measurement path:
+- timestamps recorded at each pipeline stage
+- per-frame data aggregated
+- summary statistics computed at shutdown
+- raw data exported to CSV at `artefacts/latency.csv`
 
-* records stage timestamps by `frame_id`
-* finalises latency once all required stage timestamps are available
-* computes running count / mean / min / max
-* derives jitter from measured extrema
-* prunes stale in-flight entries to avoid unbounded internal growth
-* reports summary statistics during shutdown/reporting
+Execution characteristics during measurement:
 
-Important accuracy note:
-
-* the runtime pipeline is **event-driven**
-* worker threads **block while waiting for work**
-* Linux application-level event handling may use **blocking `poll()`**
-* the processing pipeline does **not** rely on busy-wait loops for normal operation
+- camera produces frames via callback
+- control thread blocks on frame queue
+- actuator thread blocks on command queue
+- no polling or sleep-based scheduling is used in the processing path
 
 ---
 
-## 6) Architectural interpretation of the results
+## 6. Observations
 
-The measured software latency supports the following conclusions about the current implementation:
+### 6.1 Dominant Latency Source
 
-1. Per-stage computation is small relative to the end-to-end budget
-2. Control computation overhead is negligible compared with vision processing
-3. End-to-end software latency remains low across the measured sample
-4. The queue-based event-driven design does not introduce large software-side delay
-5. The staged architecture keeps the critical path short and understandable
+- vision processing dominates total latency (average 8.24 ms)
+- control stage is negligible (average 0.015 ms)
+- actuation stage is small but variable (average 0.11 ms)
 
-The current architecture choices that support this include:
+### 6.2 End-to-End Behaviour
 
-* callback-based frame delivery from the camera backend
-* blocking waits on bounded queues
-* separate control and actuation threads
-* bounded queue capacity with freshest-data behaviour
-* separation of vision, control, kinematics, and output responsibilities
+- average latency approximately 8.37 ms
+- worst-case latency approximately 14.57 ms
+- jitter approximately 7.74 ms
 
----
+### 6.3 Throughput Context
 
-## 7) Scope and limitations of the measurement
+At 30 Hz, frame period is approximately 33 ms. Measured latency remains well below one frame period, meaning:
 
-The measurement begins when a frame is delivered into the userspace pipeline (`t_capture`) and ends when the software issues the actuator command (`t_actuate`).
-
-The following are **not** included in these figures:
-
-* camera sensor exposure time
-* kernel / driver buffering before userspace delivery
-* physical servo motion time
-* mechanical settling time of the platform
-* external environmental disturbance effects
-
-Therefore, the measured values represent:
-
-**userspace software-pipeline latency**
-
-This is the appropriate scope for evaluating the responsiveness of the software architecture itself, but it is **not the same thing as full physical closed-loop response time**.
+- processing completes before the next frame arrives
+- no systematic backlog accumulation occurs
 
 ---
 
-## 8) Realtime evidence conclusion
+## 7. Design Decisions Informed by Measured Latency
 
-For the measured 829-frame run:
+The measured latency data directly shaped the following architectural choices.
 
-* average software end-to-end latency is approximately **1.11 ms**
-* worst-case measured software latency is approximately **5.34 ms**
-* measured jitter is approximately **4.64 ms**
+**Frame queue capacity set to 2**
 
-Within the scope of the userspace software pipeline, these measurements indicate:
+Average end-to-end latency of 8.37 ms is well below the 33 ms frame period at 30 Hz. A capacity of 2 allows the queue to absorb a brief control-thread stall without blocking the camera callback, while keeping the bound tight enough that the control thread never processes a frame more than one period old. A capacity of 1 would cause unnecessary frame drops under any transient load; a larger capacity would allow stale frames to accumulate and degrade tracking responsiveness.
 
-* low end-to-end processing delay
-* bounded observed timing variation
-* substantial margin against the stated software latency targets
+**Command queue capacity set to 8**
 
-The results therefore support the claim that the current implementation provides **fast and stable software-side responsiveness** for the tracker pipeline on Raspberry Pi class Linux hardware.
+The actuation stage (average 0.11 ms, worst case 3.1 ms) is faster than the vision stage by two orders of magnitude. The larger command queue absorbs short bursts from kinematics output without risking drops on the actuator thread, while remaining bounded enough to prevent unbounded command backlog under sustained load.
+
+**30 Hz camera frame rate**
+
+Worst-case measured pipeline latency of 14.57 ms is approximately 44% of a 33 ms frame period. This margin is sufficient for tracking a slowly moving solar target and confirms that 30 Hz is an appropriate operating rate for this application. A higher frame rate would not reduce tracking latency meaningfully given that vision processing dominates the total path.
+
+**Separate control and actuator threads**
+
+Vision and control stages combined (average 8.26 ms) are substantially slower than the actuation stage (average 0.11 ms). Separating these into two threads via a bounded queue ensures that vision processing jitter does not introduce unnecessary delay into the servo output path. The actuator thread processes commands as soon as they arrive rather than waiting for the next vision cycle.
 
 ---
 
-## 9) Interpretation note
+## 8. Scope of Measurement
 
-This document should be read as evidence of **software latency performance** for the current repository.
+The measurements cover software-side latency only.
 
-It does **not**, by itself, prove:
+Excluded from measurement:
 
-* full hard realtime guarantees
-* kernel-level scheduling guarantees
-* full actuator mechanical response time
-* total camera-to-motion physical loop latency
+- camera sensor exposure time
+- kernel buffering before userspace delivery
+- servo mechanical response time
+- physical platform motion and settling
+- environmental disturbances
 
-It does provide quantitative evidence that the repository’s **userspace event-driven processing path** is fast, bounded, and suitable for the project’s software control pipeline.
+The results represent userspace processing latency from frame arrival to actuator command issuance.
 
+---
 
+## 9. Summary
 
+| Metric | Value |
+|---|---|
+| Average end-to-end latency | approximately 8.37 ms |
+| Worst-case end-to-end latency | approximately 14.57 ms |
+| Jitter | approximately 7.74 ms |
+
+The system demonstrates consistent end-to-end processing with bounded latency and no accumulation. The dominant cost lies in the vision stage with minimal overhead in control and actuation. The pipeline architecture — frame queue capacity 2, command queue capacity 8, 30 Hz frame rate, dual worker threads — is directly supported by the measured timing evidence presented above.

@@ -1,0 +1,33 @@
+set(SOLAR_TEST_SUPPORT_DIR ${CMAKE_SOURCE_DIR}/src/tests/support)
+
+add_executable(test_system
+    ${SOLAR_TEST_SUPPORT_DIR}/test_main.cpp
+    test_systemmanager_statemachine.cpp
+    test_systemmanager_imu_shadow.cpp
+)
+
+target_include_directories(test_system PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}
+)
+
+target_link_libraries(test_system PRIVATE
+    solar_system
+    solar_app
+)
+
+solar_enable_coverage(test_system)
+
+add_test(NAME SystemManager_start_to_searching_then_tracking_on_bright_frame COMMAND test_system --run SystemManager_start_to_searching_then_tracking_on_bright_frame)
+add_test(NAME SystemManager_manual_mode_emits_commands COMMAND test_system --run SystemManager_manual_mode_emits_commands)
+add_test(NAME SystemManager_start_with_null_camera_enters_fault_and_fails COMMAND test_system --run SystemManager_start_with_null_camera_enters_fault_and_fails)
+add_test(NAME SystemManager_start_when_camera_start_fails_enters_fault COMMAND test_system --run SystemManager_start_when_camera_start_fails_enters_fault)
+
+add_test(NAME SystemManager_ImuShadow_StartsWithoutImuBackend COMMAND test_system --run SystemManager_ImuShadow_StartsWithoutImuBackend)
+add_test(NAME SystemManager_ImuDisabled_StartsNormally COMMAND test_system --run SystemManager_ImuDisabled_StartsNormally)
+add_test(NAME SystemManager_ImuShadow_ManualModeTransitions COMMAND test_system --run SystemManager_ImuShadow_ManualModeTransitions)
+add_test(NAME SystemManager_ImuShadow_NullCameraEntersFault COMMAND test_system --run SystemManager_ImuShadow_NullCameraEntersFault)
+add_test(NAME SystemManager_ImuShadow_CameraStartFailureEntersFault COMMAND test_system --run SystemManager_ImuShadow_CameraStartFailureEntersFault)
+add_test(NAME SystemManager_ImuShadow_StopFromIdleIsIdempotent COMMAND test_system --run SystemManager_ImuShadow_StopFromIdleIsIdempotent)
+add_test(NAME SystemManager_ImuLive_StartsNormallyWhenNoImuBackendConfigured COMMAND test_system --run SystemManager_ImuLive_StartsNormallyWhenNoImuBackendConfigured)
+add_test(NAME SystemManager_ImuShadow_StateObserverReceivesTransitions COMMAND test_system --run SystemManager_ImuShadow_StateObserverReceivesTransitions)
