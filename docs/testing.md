@@ -1,627 +1,323 @@
 # Testing and Reliability Strategy
 
-This document describes the **current** testing setup in the repository and is intended to match the code under `tests/` and `tests/CMakeLists.txt` exactly.
+This document describes the testing setup implemented in the repository source. Tests are co-located with their modules under `src/*/tests/` and wired into CTest via each module's own `CMakeLists.txt`.
 
-The testing approach is deliberately lightweight and repository-local:
+The test approach is intentionally lightweight:
 
-- a small custom test runner is used instead of an external framework such as GoogleTest or Catch2
-- automated tests are registered with **CTest**
-- hardware-facing logic is tested with fakes where practical
-- hardware-dependent checks are separated from normal software-only regression tests
-- one manual hardware smoke test executable is provided outside CTest
+- a small custom runner is used instead of an external framework
+- named checks are registered with CTest via each module's `CMakeLists.txt`
+- core logic is exercised with deterministic inputs
+- hardware-adjacent tests are separated behind an explicit build option
+- fake I2C support is used where that improves automation
 
-This document describes what is **actually present now**, not an ideal or future test plan.
+---
 
-------------------------------------------------------------------------
+## 1. Testing Approach
 
-## 1) Testing philosophy
+The test strategy is based on the following principles:
 
-The repository follows these practical testing rules:
+- keep core logic testable without physical hardware
+- isolate vision, control, queueing, kinematics, and system state as deterministic software tests
+- make hardware-adjacent tests opt-in via `-DSOLAR_ENABLE_HW_TESTS=ON`
+- expose individual named cases through CTest
+---
 
-- test core logic with deterministic inputs
-- keep image-processing, control, kinematics, queueing, and orchestration testable without physical hardware
-- use fake hardware support where that improves automation
-- keep hardware-only checks separate from normal regression runs
-- register named automated tests with CTest so failures are visible at individual test level
-- avoid overstating what is proven by software-only tests
+## 2. Test Framework
 
-The suite is therefore a mix of:
+The repository does not use GoogleTest, Catch2, or another external framework. Instead it uses a small custom framework at `src/tests/support/`:
 
-- **unit-style tests**
-- **small integration-style tests**
-- **platform/hardware integration tests**
-- **one manual hardware smoke test**
+| File | Purpose |
+|---|---|
+| `src/tests/support/test_main.cpp` | Runner entry point |
+| `src/tests/support/test_common.hpp` | `TEST_CASE(...)` registration and `REQUIRE(...)` assertion helper |
+| `src/tests/support/FakeI2CDevice.hpp` | Fake I2C device for hardware-adjacent software tests |
 
-------------------------------------------------------------------------
+Each test executable is built by linking `test_main.cpp` together with one or more test source files.
 
-## 2) Test framework used in this repository
-
-The repository does **not** currently use GoogleTest, Catch2, or another external unit-test framework.
-
-Instead, it uses a simple custom runner built from:
-
-- `tests/test_main.cpp`
-- `tests/test_common.hpp`
-
-These provide:
-
-- test registration via the `TEST(...)` macro
-- assertion helpers such as `REQUIRE(...)` and `REQUIRE_NEAR(...)`
-- execution of all tests in an executable
-- listing tests with `--list`
-- executing one exact test by name with `--run <name>`
-
-### 2.1 Running the custom runner directly
-
-Examples:
+### Running an executable directly
 
 ```bash
-./build/tests/test_core
-./build/tests/test_core --list
-./build/tests/test_core --run Controller_OutputClamped
-````
-
-With no arguments, the runner executes **all tests compiled into that executable**.
-
-This is important because some source-level tests exist in the executable even when they are **not individually exposed as separate CTest entries**.
-
----
-
-## 3) Test support files
-
-### 3.1 Shared test support
-
-The shared support files are:
-
-* `tests/test_main.cpp`
-* `tests/test_common.hpp`
-
-### 3.2 Fake hardware support
-
-The repository includes:
-
-* `tests/FakeI2CDevice.hpp`
-
-This fake is used by automated tests for selected hardware-facing classes so those tests can run without real Linux I2C hardware.
-
----
-
-## 4) Test executables built by `tests/CMakeLists.txt`
-
-The current `tests/CMakeLists.txt` builds the following executables.
-
-### 4.1 Automated software test executables
-
-These are always built by the test CMake file:
-
-* `test_core`
-* `test_pca9685`
-* `test_servodriver`
-
-### 4.2 Automated hardware integration executables
-
-These are conditionally built:
-
-* `test_linux_i2c_hw`
-
-  * built on `UNIX AND NOT APPLE`
-* `test_libcamera_hw`
-
-  * built on `UNIX AND NOT APPLE AND SOLAR_HAVE_LIBCAMERA_FLAG`
-
-These are registered with CTest as hardware/integration tests and may **skip** when the required device or environment is not available.
-
-### 4.3 Manual hardware executable
-
-This is built but **not** registered with CTest:
-
-* `servo_manual_smoketest`
-
-This is a manual utility, not part of the normal automated regression suite.
-
----
-
-## 5) CTest integration
-
-The repository uses **CTest** and registers many tests individually with `add_test(...)`.
-
-This means CTest can report failures by specific named case rather than only by executable.
-
-### 5.1 Running CTest on Linux / single-config generators
-
-```bash
-ctest --test-dir build --output-on-failure
+# Run all tests compiled into an executable
+./build/src/control/tests/test_control
 ```
 
-### 5.2 Running CTest on Windows / multi-config generators
+With no arguments an executable runs every test compiled into it. CTest remains the primary interface for selecting and running tests. Individual test binaries can also be run directly from the build tree, but their command-line interfaces are not assumed to be uniform across all executables.
 
-```powershell
+---
+
+## 3. Test Executables and Module Structure
+
+Tests are co-located with source. Each module's `CMakeLists.txt` conditionally includes its `tests/` subdirectory.
+
+### Always-built executables (`SOLAR_ENABLE_TESTS=ON`)
+
+| Executable | Module | Source path |
+|---|---|---|
+| `test_common_core` | `src/common` | `src/common/tests/` |
+| `test_vision` | `src/vision` | `src/vision/tests/` |
+| `test_control` | `src/control` | `src/control/tests/` |
+| `test_actuators` | `src/actuators` | `src/actuators/tests/` |
+| `test_system` | `src/system` | `src/system/tests/` |
+
+### Hardware-adjacent executables (`SOLAR_ENABLE_TESTS=ON` and `SOLAR_ENABLE_HW_TESTS=ON`)
+
+| Executable | Module | Source path |
+|---|---|---|
+| `test_pca9685` | `src/actuators` | `src/actuators/tests/` |
+| `test_servodriver` | `src/actuators` | `src/actuators/tests/` |
+| `test_mpu6050_publisher` | `src/sensors` | `src/sensors/tests/` |
+| `test_linux_i2c_hw` | `src/hal` | `src/hal/tests/` |
+
+---
+
+## 4. CTest Integration
+
+CTest is used and named cases are registered with `add_test(...)` in each module's `CMakeLists.txt`, allowing failures to be reported at individual test-case level.
+
+```bash
+# Linux / single-config generators
+ctest --test-dir build --output-on-failure
+
+# Windows / multi-config generators
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-### 5.3 Important note about counts
+### Test count
 
-The total number of CTest entries depends on platform and optional hardware support:
-
-* **42** base automated CTest entries are registered unconditionally
-* **43** on `UNIX AND NOT APPLE` when `test_linux_i2c_hw` is included
-* **44** on `UNIX AND NOT APPLE` when both:
-
-  * `test_linux_i2c_hw` is included, and
-  * `SOLAR_HAVE_LIBCAMERA_FLAG` enables `test_libcamera_hw`
-
-So the exact visible CTest count is platform/configuration dependent.
+| Condition | CTest entries |
+|---|---:|
+| `SOLAR_ENABLE_TESTS=ON` only | 55 |
+| `SOLAR_ENABLE_TESTS=ON` and `SOLAR_ENABLE_HW_TESTS=ON` | 75 |
 
 ---
 
-## 6) Automated tests currently registered with CTest
+## 5. CTest Cases by Module
 
-This section lists the tests that are **individually registered** in `tests/CMakeLists.txt`.
+### 5.1 SunTracker
 
-## 6.1 `SunTracker` tests
+Executable: `test_vision` — Source: `src/vision/tests/test_suntracker.cpp`
 
-Source file:
+| CTest Case | What It Covers |
+|---|---|
+| `SunTracker_DetectsSingleBrightPixel` | Bright target detection |
+| `SunTracker_NoBrightPixels_ProducesZeroConfidence` | Zero-confidence when no bright region exists |
+| `SunTracker_WeightedCentroid_IsCorrect` | Weighted centroid on deterministic synthetic input |
 
-* `tests/test_suntracker.cpp`
+### 5.2 Controller
 
-Executable:
+Executable: `test_control` — Source: `src/control/tests/test_controller.cpp`
 
-* `test_core`
+| CTest Case | What It Covers |
+|---|---|
+| `Controller_LowConfidence_NoMotion` | Confidence gating |
+| `Controller_WithinDeadband_NoMotion` | Deadband behaviour |
+| `Controller_OutsideDeadband_ProducesMotion` | Non-zero control response |
+| `Controller_OutputClamped` | Output saturation/clamping |
 
-CTest-registered cases:
+### 5.3 Kinematics3RRS
 
-* `SunTracker_NoBrightPixels_ConfidenceZero`
-* `SunTracker_BrightSpot_Gray8Packed_CentroidApproxCorrect`
-* `SunTracker_BrightSpot_Gray8PaddedStride_CentroidApproxCorrect`
-* `SunTracker_BrightSpot_RGB888_CentroidApproxCorrect`
-* `SunTracker_BrightSpot_BGR888_CentroidApproxCorrect`
-* `SunTracker_InvalidBuffer_DoesNotEmitEstimate`
+Executable: `test_control` — Source: `src/control/tests/test_kinematics.cpp`
 
-What these tests cover:
+| CTest Case | What It Covers |
+|---|---|
+| `Kinematics3RRS_outputs_in_range_for_moderate_setpoint` | Output sanity and servo range |
+| `Kinematics3RRS_neutral_setpoint_produces_near_neutral_angles` | Neutral symmetry |
+| `Kinematics3RRS_frame_id_forwarded_through_callback` | Frame ID propagation |
+| `Kinematics3RRS_small_setpoint_changes_produce_small_output_changes` | Continuity for small input changes |
+| `Kinematics3RRS_zero_setpoint_after_valid_does_not_trigger_fallback` | Zero setpoint does not degrade |
+| `Kinematics3RRS_large_reachable_setpoint_stays_in_range` | Workspace boundary check |
+| `Kinematics3RRS_invalid_geometry_surfaces_error_status` | Invalid-geometry error surfacing |
+| `Kinematics3RRS_first_invalid_then_second_invalid_stays_in_range` | Consecutive invalid configs safe |
+| `Kinematics3RRS_good_then_bad_geometry_falls_back_to_last_valid` | Fallback after previously valid state |
 
-* no bright target present
-* centroid estimation on packed grayscale data
-* centroid estimation on padded-stride grayscale data
-* centroid estimation on RGB input
-* centroid estimation on BGR input
-* rejection of invalid buffer cases
+### 5.4 ManualInputMapper
 
-These are deterministic synthetic-frame tests and do not require a real camera.
+Executable: `test_control` — Source: `src/control/tests/test_manual_input_mapper.cpp`
 
----
+| CTest Case | What It Covers |
+|---|---|
+| `ManualInputMapper_CentreVoltage_MapsToZeroCommand` | Centre mapping |
+| `ManualInputMapper_LowAndHighVoltages_MapToMinusAndPlusOne` | Full-range mapping |
+| `ManualInputMapper_InversionFlags_FlipDirections` | Inversion behaviour |
+| `ManualInputMapper_Deadband_ZerosSmallInputsAndRescalesBeyondDeadband` | Deadband behaviour |
+| `ManualInputMapper_OutOfRangeVoltages_AreClampedSafely` | Safe clamping of out-of-range inputs |
 
-## 6.2 `Controller` tests
+### 5.5 ImuFeedbackMapper
 
-Source file:
+Executable: `test_control` — Source: `src/control/tests/test_imu_feedback_mapper.cpp`
 
-* `tests/test_controller.cpp`
+| CTest Case | What It Covers |
+|---|---|
+| `ImuFeedbackMapper_ZeroTilt_ProducesZeroCorrection` | Zero-tilt response |
+| `ImuFeedbackMapper_PositiveTilt_ProducesNegativeCorrection` | Correction sign |
+| `ImuFeedbackMapper_NegativeTilt_ProducesPositiveCorrection` | Symmetry across tilt direction |
+| `ImuFeedbackMapper_RuntimeGainChange_TakesEffectImmediately` | Immediate effect of runtime gain changes |
 
-Executable:
+### 5.6 ImuTiltEstimator
 
-* `test_core`
+Executable: `test_control` — Source: `src/control/tests/test_imu_tilt_estimator.cpp`
 
-CTest-registered cases:
+| CTest Case | What It Covers |
+|---|---|
+| `ImuTiltEstimator_InvalidSample_ReturnsZero` | Invalid sample handling |
+| `ImuTiltEstimator_LevelGravity_ReturnsZeroTilt` | Level orientation |
+| `ImuTiltEstimator_PositiveAx_WithGravity_ReturnsPositiveTilt` | Positive tilt reconstruction |
+| `ImuTiltEstimator_NegativeAx_WithGravity_ReturnsNegativeTilt` | Negative tilt reconstruction |
+| `ImuTiltEstimator_DegenerateDenominator_ReturnsZero` | Degenerate denominator protection |
 
-* `Controller_LowConfidence_NoMotion`
-* `Controller_WithinDeadband_NoMotion`
-* `Controller_OutsideDeadband_ProducesMotion`
-* `Controller_OutputClamped`
+### 5.7 ActuatorManager
 
-What these tests cover:
+Executable: `test_actuators` — Source: `src/actuators/tests/test_actuatormanager.cpp`
 
-* confidence gating
-* deadband behaviour
-* non-zero response outside the deadband
-* output saturation/clamping
+| CTest Case | What It Covers |
+|---|---|
+| `ActuatorManager_first_command_is_saturated_without_history_limit` | First-command behaviour |
+| `ActuatorManager_subsequent_commands_are_rate_limited_per_channel` | Per-channel rate limiting |
+| `ActuatorManager_saturation_happens_before_history_update` | Saturation ordering |
+| `ActuatorManager_resetHistory_disables_slew_limit_for_next_command` | History reset behaviour |
+| `ActuatorManager_zero_or_negative_step_holds_previous_value` | Behaviour when allowed step is zero or negative |
 
----
+### 5.8 ThreadSafeQueue
 
-## 6.3 `ActuatorManager` tests
+Executable: `test_common_core` — Source: `src/common/tests/test_threadsafequeue.cpp`
 
-Source file:
+| CTest Case | What It Covers |
+|---|---|
+| `ThreadSafeQueue_FIFO_basic` | FIFO ordering |
+| `ThreadSafeQueue_bounded_push_strict_rejects_when_full` | Strict bounded insertion |
+| `ThreadSafeQueue_bounded_push_latest_drops_oldest` | Freshest-value overwrite semantics |
+| `ThreadSafeQueue_wait_pop_blocks_then_wakes` | Blocking wake-up behaviour |
+| `ThreadSafeQueue_stop_unblocks_waiters_and_returns_nullopt_when_empty` | Stop/unblock behaviour |
 
-* `tests/test_actuatormanager.cpp`
+### 5.9 LatencyMonitor
 
-Executable:
+Executable: `test_common_core` — Source: `src/common/tests/test_latency_monitor.cpp`
 
-* `test_core`
+| CTest Case | What It Covers |
+|---|---|
+| `LatencyMonitor_accepts_ordered_timestamps_and_prints` | Ordered timestamp handling |
+| `LatencyMonitor_handles_out_of_order_calls_without_crashing` | Out-of-order robustness |
+| `LatencyMonitor_prunes_inflight_frames_under_pressure_without_crashing` | In-flight frame pruning under pressure |
 
-CTest-registered cases:
+> **Note:** A fourth test (`LatencyMonitor_reports_jitter_over_multiple_records`) is compiled into `test_common_core` but is not individually registered as a CTest entry.
 
-* `ActuatorManager_first_command_is_saturated_without_history_limit`
-* `ActuatorManager_subsequent_commands_are_rate_limited_per_channel`
-* `ActuatorManager_saturation_happens_before_rate_limit`
-* `ActuatorManager_runtime_like_large_max_step_effectively_disables_slew_limit`
-* `ActuatorManager_callback_can_reenter_onCommand_without_deadlock`
+### 5.10 SystemManager
 
-What these tests cover:
+Executable: `test_system`  
+Sources: `src/system/tests/test_systemmanager_statemachine.cpp`, `src/system/tests/test_systemmanager_imu_shadow.cpp`
 
-* first-command saturation behaviour
-* per-channel slew/rate limiting on later commands
-* saturation ordering relative to rate limiting
-* runtime-like large-step configuration behaviour
-* callback re-entry without deadlock
-
----
-
-## 6.4 `ThreadSafeQueue` tests
-
-Source file:
-
-* `tests/test_threadsafequeue.cpp`
-
-Executable:
-
-* `test_core`
-
-CTest-registered cases:
-
-* `ThreadSafeQueue_FIFO_basic`
-* `ThreadSafeQueue_bounded_push_strict_rejects_when_full`
-* `ThreadSafeQueue_bounded_push_latest_drops_oldest`
-* `ThreadSafeQueue_wait_pop_blocks_then_wakes`
-* `ThreadSafeQueue_stop_unblocks_waiters_and_returns_nullopt_when_empty`
-
-What these tests cover:
-
-* FIFO ordering
-* strict bounded push rejection
-* latest-value overwrite semantics
-* blocking wake-up behaviour
-* stop/unblock behaviour
-
----
-
-## 6.5 `Kinematics3RRS` tests
-
-Source file:
-
-* `tests/test_kinematics.cpp`
-
-Executable:
-
-* `test_core`
-
-CTest-registered cases:
-
-* `Kinematics3RRS_outputs_in_range_and_integer_like`
-* `Kinematics3RRS_continuity_small_setpoint_changes_small_output_changes`
-* `Kinematics3RRS_invalid_geometry_is_surfaced_explicitly`
-
-What these tests cover:
-
-* output finiteness and expected servo range
-* continuity under small setpoint changes
-* explicit surfacing of invalid geometry conditions
+| CTest Case | What It Covers |
+|---|---|
+| `SystemManager_start_to_searching_then_tracking_on_bright_frame` | Startup progression and tracking-state transition |
+| `SystemManager_manual_mode_emits_commands` | Manual mode command emission |
+| `SystemManager_start_with_null_camera_enters_fault_and_fails` | Fault entry on null camera |
+| `SystemManager_start_when_camera_start_fails_enters_fault` | Fault entry on camera start failure |
+| `SystemManager_ImuShadow_StartsWithoutImuBackend` | IMU shadow-mode startup without backend |
+| `SystemManager_ImuDisabled_StartsNormally` | IMU disabled mode starts normally |
+| `SystemManager_ImuShadow_ManualModeTransitions` | Shadow mode does not block manual transitions |
+| `SystemManager_ImuShadow_NullCameraEntersFault` | Null camera enters FAULT |
+| `SystemManager_ImuShadow_CameraStartFailureEntersFault` | Camera start failure enters FAULT |
+| `SystemManager_ImuShadow_StopFromIdleIsIdempotent` | Stop from IDLE is a safe no-op |
+| `SystemManager_ImuLive_StartsNormallyWhenNoImuBackendConfigured` | Live mode degrades gracefully without IMU |
+| `SystemManager_ImuShadow_StateObserverReceivesTransitions` | State observer receives startup transitions |
 
 ---
 
-## 6.6 `LatencyMonitor` tests registered with CTest
+## 6. Hardware-Adjacent Tests (`SOLAR_ENABLE_HW_TESTS=ON`)
 
-Source file:
+### 6.1 PCA9685
 
-* `tests/test_latency_monitor.cpp`
+Executable: `test_pca9685` — Source: `src/actuators/tests/test_pca9685.cpp`
 
-Executable:
+| CTest Case | What It Covers |
+|---|---|
+| `PCA9685_default_constructor_is_not_started` | Safe default construction |
+| `PCA9685_set_pulse_us_fails_before_start` | Pre-start failure handling |
+| `PCA9685_invalid_channel_rejected_even_if_not_started` | Channel validation |
+| `PCA9685_stop_is_safe_when_not_started` | Safe stop before startup |
 
-* `test_core`
+### 6.2 ServoDriver
 
-CTest-registered cases:
+Executable: `test_servodriver` — Source: `src/actuators/tests/test_servodriver.cpp`
 
-* `LatencyMonitor_accepts_ordered_timestamps_and_prints`
-* `LatencyMonitor_handles_out_of_order_calls_without_crashing`
-* `LatencyMonitor_prunes_inflight_frames_under_pressure_without_crashing`
+| CTest Case | What It Covers |
+|---|---|
+| `ServoDriver_log_only_mode_starts_without_hardware` | Startup policy across hardware modes |
+| `ServoDriver_require_hardware_fails_fast_when_unavailable` | Fast failure on missing required hardware |
+| `ServoDriver_prefer_hardware_falls_back_to_log_only_when_unavailable` | Fallback to log-only mode |
+| `ServoDriver_require_hardware_with_injected_pca_enters_hardware_mode` | Injected PCA path |
+| `ServoDriver_apply_while_stopped_writes_nothing` | No writes while stopped |
+| `ServoDriver_start_parks_to_neutral_when_enabled` | Parking on start |
+| `ServoDriver_stop_parks_to_neutral_when_enabled` | Parking on stop |
+| `ServoDriver_apply_clamps_and_writes_channels` | Command clamping and channel writes |
+| `ServoDriver_inverted_channel_maps_correctly` | Inverted channel mapping |
 
-What these tests cover:
+### 6.3 Mpu6050Publisher
 
-* normal ordered timestamp flow
-* resilience to out-of-order calls
-* pruning behaviour under inflight pressure
+Executable: `test_mpu6050_publisher` — Source: `src/sensors/tests/test_mpu6050_publisher.cpp`
 
-### Important accuracy note
+| CTest Case | What It Covers |
+|---|---|
+| `Mpu6050Publisher_StartFailsWithoutCallback` | Callback pre-condition (software) |
+| `Mpu6050Publisher_StartFailsIfWhoAmIDoesNotMatch` | WHO_AM_I identity check (software) |
+| `Mpu6050Publisher_InitialisesExpectedRegisters` | Six init registers written before GPIO (software) |
+| `Mpu6050Publisher_StartSucceedsAndStopClosesDevice` | Full start/stop lifecycle (hardware, GPIO 27) |
+| `Mpu6050Publisher_DoubleStartReturnsFalse` | Double-start guard (hardware, GPIO 27) |
+| `Mpu6050Publisher_StartupDiscardPreventsEarlyCallbacks` | Startup discard window (hardware, GPIO 27) |
 
-`tests/test_latency_monitor.cpp` contains **additional source-level tests** beyond the three individually registered CTest entries. Those additional tests are compiled into `test_core` and run when `test_core` is executed directly without `--run`, but they are **not** exposed as separate named CTest entries.
+### 6.4 Linux I2C Hardware Check
 
-Those additional source-level tests are:
+Executable: `test_linux_i2c_hw` — Source: `src/hal/tests/test_linux_i2c_hw.cpp`
 
-* `LatencyMonitor_writes_raw_csv_for_finalized_frames`
-* `LatencyMonitor_invokes_observer_when_frame_is_finalized`
-* `LatencyMonitor_appends_rows_when_truncate_disabled`
-
-So:
-
-* **CTest registration for LatencyMonitor:** 3 named entries
-* **Source-level LatencyMonitor tests compiled into `test_core`:** 6 total
-
----
-
-## 6.7 Trajectory / kinematics integration-style test
-
-Source file:
-
-* `tests/test_trajectory_circular.cpp`
-
-Executable:
-
-* `test_core`
-
-CTest-registered case:
-
-* `Trajectory_CircularSetpoints_ProduceValidServoOutputs`
-
-What this test covers:
-
-* repeated circular setpoints producing finite, in-range servo outputs
-
-This is integration-like because it exercises repeated setpoint-to-command generation rather than a single isolated calculation.
+| CTest Case | Labels | Notes |
+|---|---|---|
+| `LinuxI2C_PCA9685_hw_init_and_write` | `hw;i2c;integration` | Skips cleanly (`SKIP_RETURN_CODE 77`) when hardware is unavailable |
 
 ---
 
-## 6.8 `SystemManager` state-machine tests registered with CTest
+## 7. What the Tests Demonstrate
 
-Source file:
+- bright-target detection and centroid logic
+- controller gating, deadband, and output clamping
+- bounded queue semantics and blocking wake-up behaviour
+- actuator command limiting and history behaviour
+- kinematics validity, continuity, and fallback behaviour
+- latency-monitor robustness
+- system-manager startup, manual-mode, and selected fault paths
+- manual input mapping
+- IMU tilt estimation and IMU feedback mapping
+- selected startup and mapping behaviour of PCA9685, ServoDriver, and MPU6050 publisher (when hardware-adjacent tests are enabled)
 
-* `tests/test_systemmanager_statemachine.cpp`
-
-Executable:
-
-* `test_core`
-
-CTest-registered cases:
-
-* `SystemManager_start_to_searching_then_tracking_on_bright_frame`
-* `SystemManager_manual_mode_emits_commands`
-* `SystemManager_start_with_null_camera_enters_fault_and_fails`
-* `SystemManager_start_when_servo_driver_requires_missing_hardware_enters_fault`
-* `SystemManager_start_when_camera_start_fails_enters_fault`
-
-What these tests cover:
-
-* startup progression into `SEARCHING` and then `TRACKING`
-* manual mode command emission
-* startup failure with null camera
-* startup failure when hardware is required but unavailable
-* startup failure when camera start fails
-
-### Important accuracy note
-
-`tests/test_systemmanager_statemachine.cpp` contains one additional source-level test that is compiled into `test_core` but is **not individually registered as a named CTest case**:
-
-* `SystemManager_manual_mode_uses_nonzero_synthetic_frame_ids`
-
-So:
-
-* **CTest registration for SystemManager:** 5 named entries
-* **Source-level SystemManager tests compiled into `test_core`:** 6 total
 
 ---
 
-## 6.9 `PCA9685` tests
-
-Source file:
-
-* `tests/test_pca9685.cpp`
-
-Executable:
-
-* `test_pca9685`
-
-CTest-registered cases:
-
-* `PCA9685_init_writes_mode_and_prescale`
-* `PCA9685_set_pwm_writes_led_register_block`
-* `PCA9685_set_pulse_us_uses_frequency_conversion`
-
-What these tests cover:
-
-* initialization register writes
-* PWM register block writes
-* pulse-width conversion logic
-
-These tests use the fake I2C device rather than real hardware.
-
----
-
-## 6.10 `ServoDriver` tests
-
-Source file:
-
-* `tests/test_servodriver.cpp`
-
-Executable:
-
-* `test_servodriver`
-
-CTest-registered cases:
-
-* `ServoDriver_log_only_mode_starts_without_hardware`
-* `ServoDriver_require_hardware_fails_fast_when_unavailable`
-* `ServoDriver_prefer_hardware_falls_back_to_log_only_when_unavailable`
-* `ServoDriver_require_hardware_with_injected_pca_enters_hardware_mode`
-* `ServoDriver_apply_while_stopped_writes_nothing`
-* `ServoDriver_start_without_parking_does_not_write_servo_channels`
-* `ServoDriver_start_parks_to_neutral_when_enabled`
-* `ServoDriver_stop_parks_to_neutral_when_enabled`
-* `ServoDriver_apply_clamps_and_writes_channels`
-* `ServoDriver_neutral_degree_maps_midway_between_low_and_high`
-
-What these tests cover:
-
-* startup policy behaviour across log-only / prefer-hardware / require-hardware modes
-* fast failure when hardware is required but unavailable
-* injected PCA path entering hardware mode
-* no writes while stopped
-* parking behaviour on start and stop
-* clamping and output writes
-* neutral-angle mapping
-
----
-
-## 7) Hardware integration tests
-
-These are automated tests but are platform- and hardware-dependent.
-
-## 7.1 Linux I2C / PCA9685 hardware test
-
-Source file:
-
-* `tests/test_linux_i2c_hw.cpp`
-
-Executable:
-
-* `test_linux_i2c_hw`
-
-CTest-registered case:
-
-* `LinuxI2C_PCA9685_hw_init_and_write`
-
-Build condition:
-
-* `UNIX AND NOT APPLE`
-
-CTest properties:
-
-* labels: `hw;i2c;integration`
-* `SKIP_RETURN_CODE 77`
-
-Meaning:
-
-* this is intended for real Linux I2C + PCA9685 hardware
-* it may skip cleanly when the required hardware or environment is not available
-
----
-
-## 7.2 libcamera hardware test
-
-Source file:
-
-* `tests/test_libcamera_hw.cpp`
-
-Executable:
-
-* `test_libcamera_hw`
-
-CTest-registered case:
-
-* `LibcameraPublisher_hw_delivers_frames_with_public_contract`
-
-Build condition:
-
-* `UNIX AND NOT APPLE AND SOLAR_HAVE_LIBCAMERA_FLAG`
-
-CTest properties:
-
-* labels: `hw;camera;integration`
-* `SKIP_RETURN_CODE 77`
-
-Meaning:
-
-* this is intended for real libcamera-backed camera hardware
-* it may skip cleanly when the camera environment is not available
-* it is only built when libcamera support is available in the current configuration
-
----
-
-## 8) Manual hardware smoke test
-
-Source file:
-
-* `tests/servo_manual_smoketest.cpp`
-
-Executable:
-
-* `servo_manual_smoketest`
-
-This executable is **not** registered with CTest.
-
-Its role is:
-
-* manual checking of servo-path behaviour on suitable hardware
-* quick smoke testing outside the normal automated regression suite
-
-It should be described as a **manual hardware utility**, not as part of the normal automated test count.
-
----
-
-## 9) Summary of what is and is not proven
-
-The current automated software-oriented suite provides good evidence for:
-
-* sun-tracking frame processing logic
-* controller gating, deadband, and clamping
-* bounded queue semantics and blocking wake-up behaviour
-* actuator saturation and slew limiting behaviour
-* kinematics output sanity and explicit invalid-geometry surfacing
-* latency-monitor robustness for several important software-side behaviours
-* system-manager startup/manual/fault-path behaviour at software level
-* PCA9685 register-write logic via fake I2C
-* ServoDriver startup-policy and mapping behaviour
-
-The current suite does **not**, by itself, prove:
-
-* full physical motion correctness of the real mechanism
-* end-to-end hardware reliability under long real-world runs
-* hard real-time guarantees
-* complete runtime handling of every external hardware failure mode
-
-So the tests provide strong **software-side evidence**, plus limited hardware-integration evidence where supported, but they should not be overstated as proof of complete physical-system validation.
-
----
-
-## 10) Practical commands
-
-### 10.1 Run the main automated suite directly
+## 8. Practical Commands
 
 ```bash
-./build/tests/test_core
-./build/tests/test_pca9685
-./build/tests/test_servodriver
+# Run all CTest-registered checks
+ctest --test-dir build --output-on-failure -LE hw
+
+# Run hardware tests (requires hardware connected)
+SOLAR_RUN_I2C_HW_TESTS=1 ctest --test-dir build --output-on-failure
+
+# Run one CTest entry by name
+ctest --test-dir build --output-on-failure -R Controller_OutputClamped
+
+# Run individual module executables directly
+./build/src/vision/tests/test_vision
+./build/src/control/tests/test_control
+./build/src/common/tests/test_common_core
+./build/src/actuators/tests/test_actuators
+./build/src/system/tests/test_system
+
+# Enable and build hardware-adjacent tests
+cmake -S . -B build -G Ninja -DSOLAR_ENABLE_TESTS=ON -DSOLAR_ENABLE_HW_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
+cmake --build build -j
+
+# Run hardware-adjacent executables directly
+./build/src/actuators/tests/test_pca9685
+./build/src/actuators/tests/test_servodriver
+./build/src/sensors/tests/test_mpu6050_publisher
 ```
 
-### 10.2 List test names in an executable
 
-```bash
-./build/tests/test_core --list
-./build/tests/test_pca9685 --list
-./build/tests/test_servodriver --list
-```
-
-### 10.3 Run one exact named test
-
-```bash
-./build/tests/test_core --run ThreadSafeQueue_wait_pop_blocks_then_wakes
-./build/tests/test_pca9685 --run PCA9685_init_writes_mode_and_prescale
-./build/tests/test_servodriver --run ServoDriver_apply_clamps_and_writes_channels
-```
-
-### 10.4 Run all CTest-registered checks
-
-Linux / single-config:
-
-```bash
-ctest --test-dir build --output-on-failure
-```
-
-Windows / multi-config:
-
-```powershell
-ctest --test-dir build -C Release --output-on-failure
-```
-
----
-
-## 11) Final accuracy notes
-
-This document is intended to match:
-
-* `tests/CMakeLists.txt`
-* the current test source files under `tests/`
-
-If the test inventory changes, this document must be updated at the same time.
-
-In particular, keep these distinctions clear:
-
-* **source-level tests compiled into an executable**
-* **named CTest entries individually registered with `add_test(...)`**
-* **conditional hardware tests**
-* **manual hardware utilities not included in CTest**

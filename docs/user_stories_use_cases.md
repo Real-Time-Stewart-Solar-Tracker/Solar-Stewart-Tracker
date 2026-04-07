@@ -1,129 +1,208 @@
-# Requirements (User Stories + Use Cases)
+# User Stories and Use Cases
 
-## System goal
+## Purpose
 
-A camera-based solar tracking system using a 3RRS Stewart-style platform.  
-The system estimates sun direction from camera frames and adjusts panel orientation in real time using event-driven C++ on Raspberry Pi Linux.
-
----
-
-## User Stories (prioritised)
-
-### US1 (MUST) Start tracking
-
-As a user, I want to start the tracker so that the platform aligns the solar panel automatically.
-
-Acceptance criteria:
-- Starts by parking the servos to a safe calibrated startup position.
-- Camera starts and frames are processed.
-- If the sun is not detected, the system remains in a safe searching behaviour and reports `SEARCHING`.
-- If startup hardware requirements are not met, the system enters `FAULT`.
+This document captures the user-facing goals supported by the  repository . All stories and use cases are grounded in the actual runtime behaviour visible in `src/app/CliController.cpp`, `src/qt/MainWindow.cpp`, and `src/system/SystemManager.hpp`.
 
 ---
 
-### US2 (MUST) Maintain alignment (core real-time behaviour)
+## 1. User Stories
 
-As a user, I want continuous alignment updates so that the panel stays facing the sun.
+### Story 1 — Automatic tracking
 
-Acceptance criteria:
-- Each new frame triggers an update through the event-driven pipeline.
-- Outputs are bounded, rate-limited, and respect configured safety limits.
-- If confidence drops, the system reduces motion and transitions from `TRACKING` back to `SEARCHING`.
+As a user, I want the platform to automatically align toward the brightest light source so that the system performs autonomous solar tracking without manual intervention.
 
----
+Supported by: automatic SEARCHING → TRACKING state transition on confidence threshold; continuous closed-loop updates in TRACKING state.
 
-### US3 (SHOULD) Manual mode for calibration
+### Story 2 — Manual override via physical potentiometers
 
-As a user, I want a manual mode so I can test and calibrate safely.
+As a user, I want to manually position the platform using physical potentiometer inputs so that I can test, calibrate, or override the automatic mode without a computer.
 
-Acceptance criteria:
-- Switch between `AUTO` and `MANUAL`.
-- Manual commands respect limits and rate limits.
-- Returning to automatic operation resumes normal event-driven tracking behaviour.
+Supported by: ADS1115 manual input backend; `ManualCommandSource::Pot`; MANUAL state with actuator path still active.
 
----
+### Story 3 — Manual override via GUI sliders
 
-### US4 (MUST) Safe stop
+As a user, I want to send explicit tilt and pan setpoints from the GUI so that I can position the platform precisely from the application window.
 
-As a user, I want to stop the system at any time so it returns to a safe state.
+Supported by: pan and tilt `QSlider` controls in `MainWindow`; "Send manual setpoint" and "Zero" buttons; `ManualCommandSource::Gui`; `setManualSetpoint(tilt_rad, pan_rad)`.
 
-Acceptance criteria:
-- Stops processing and actuation cleanly.
-- Shuts down worker threads cleanly.
-- Stops camera streaming and releases resources.
-- Applies configured stop/park behaviour where enabled.
+### Story 4 — Manual override via CLI
 
----
+As a developer or operator, I want to send manual setpoints and control the runtime from a terminal so that I can operate the system without the GUI.
 
-### US5 (SHOULD) Logs and latency metrics
+Supported by: `CliController` commands: `manual`, `auto`, `set <tilt_rad> <pan_rad>`, `threshold <0..255>`, `quit`.
 
-As an assessor or developer, I want latency logs so real-time performance can be evaluated.
+### Story 5 — Runtime state visibility
 
-Acceptance criteria:
-- Records timestamps across the software pipeline: frame, vision, control, and actuation.
-- Reports summary statistics including average, minimum, maximum, and jitter.
+As a user, I want to see whether the system is IDLE, STARTUP, NEUTRAL, SEARCHING, TRACKING, MANUAL, STOPPING, or FAULT so that I always know the current operating mode.
 
----
+Supported by: `registerStateObserver()` callback; `modeLabel_` and `statusLabel_` in `MainWindow`; CLI status output.
 
-## Use Cases
+### Story 6 — Observe live pipeline signals
 
-### UC1 Start and track (AUTO)
+As a developer, I want to observe frame data, target estimates, platform setpoints, actuator commands, potentiometer voltages, and IMU readings in real time so that I can verify and debug pipeline behaviour.
 
-1. User starts the program.
-2. System loads configuration and enters `STARTUP`.
-3. System starts camera and worker threads.
-4. System parks the servos to the configured startup position and enters `NEUTRAL`.
-5. Camera delivers frames through the callback-based input path.
-6. `SunTracker` produces a sun estimate from each frame.
-7. `Controller` produces desired tilt/pan commands.
-8. `Kinematics3RRS` produces actuator commands.
-9. `ActuatorManager` shapes commands within configured limits.
-10. `ServoDriver` applies output commands.
-11. System transitions between `SEARCHING` and `TRACKING` according to confidence.
+Supported by the following registered observers in `MainWindow`:
 
-Alternative paths:
-- Sun not found -> `SEARCHING`
-- Camera startup failure -> `FAULT`
-- Required actuator hardware unavailable at startup -> `FAULT`
-- Invalid kinematics result surfaced to the system manager -> `FAULT`
+| Observer | Data Exposed |
+|---|---|
+| `registerFrameObserver` | Raw camera frames → live preview |
+| `registerEstimateObserver` | `SunEstimate` (position + confidence) |
+| `registerSetpointObserver` | `PlatformSetpoint` (tilt, pan) |
+| `registerCommandObserver` | `ActuatorCommand` (3-channel targets) → servo command plot |
+| `registerManualObserver` | `ManualPotSample` (tilt voltage, pan voltage, sequence) |
+| `registerImuObserver` | `ImuSample` (ax, ay, az) + computed tilt in degrees |
+| `registerLatencyObserver` | Per-frame latency breakdown |
 
----
+### Story 7 — Adjust tracking sensitivity at runtime
 
-### UC2 Continue operation when confidence drops
+As a user, I want to adjust the brightness threshold used for target detection without restarting the application so that I can tune tracking sensitivity for changing light conditions.
 
-1. System is in `TRACKING`.
-2. Tracking confidence drops below the configured threshold.
-3. System transitions back to `SEARCHING`.
-4. Frame-driven processing continues.
-5. If confidence recovers, system returns to `TRACKING`.
+Supported by: threshold `+`/`-` buttons in `MainWindow`; `threshold <0..255>` CLI command; `setTrackerThreshold()` in `SystemManager`.
+
+### Story 8 — Switch manual input source at runtime
+
+As a user, I want to switch between potentiometer control and GUI slider control without leaving manual mode so that I can hand off between physical and software inputs seamlessly.
+
+Supported by: "Use Pots" / "Use GUI" buttons in `MainWindow`; `setManualCommandSource(ManualCommandSource::Pot/Gui)`.
+
+### Story 9 — Safe shutdown
+
+As a user, I want the platform to park safely and all backends to stop cleanly when I close the application so that the hardware is left in a known state.
+
+Supported by: STOPPING state sequence (camera stop → thread join → neutral command → actuator stop → driver stop → IDLE); `park_on_stop = true` in default config; `signalfd` SIGINT/SIGTERM handling in `LinuxEventLoop`.
+
+### Story 10 — Run without full hardware
+
+As a developer or assessor, I want the system to run and process frames without a real camera or servo hardware so that software testing and non-hardware validation remain possible.
+
+Supported by: `SimulatedPublisher` (`CameraBackend::Simulated`); `ServoDriver::StartupPolicy::LogOnly`; full software test suite in `test_core`.
 
 ---
 
-### UC3 Manual mode
+## 2. Use Cases
 
-1. User switches to `MANUAL`.
-2. System stops automatic tracking updates from driving motion commands.
-3. User issues manual commands within bounded limits.
-4. System moves platform through the normal actuator path.
-5. User switches back to automatic operation.
-6. Normal frame-driven tracking resumes.
+### UC-1: Start automatic tracking
 
----
+**Actor:** user
 
-### UC4 Safe stop
+**Precondition:** application launched
 
-1. User requests stop.
-2. System enters `STOPPING`.
-3. System stops accepting normal processing flow.
-4. Worker threads are signalled to stop and are joined cleanly.
-5. Camera resources are released.
-6. Configured stop/park behaviour is applied where enabled.
-7. System returns to `IDLE`.
+1. `SystemManager::start()` is called
+2. runtime enters STARTUP — camera validity checked, driver started, queues reset, threads started
+3. runtime enters NEUTRAL — startup park applied at 41°
+4. runtime enters SEARCHING — frames begin processing
+5. `SunTracker` produces an estimate with confidence ≥ 0.4
+6. runtime enters TRACKING — closed-loop actuator updates begin
+
+**Postcondition:** platform continuously updates to follow the brightest target
 
 ---
 
-## System State Machine (high level)
+### UC-2: Switch to manual mode and position the platform
 
-`IDLE -> STARTUP -> NEUTRAL -> (SEARCHING <-> TRACKING) -> STOPPING -> IDLE`  
-`                              \-> MANUAL`  
-`                              \-> FAULT`
+**Actor:** user
+
+**Precondition:** system in SEARCHING or TRACKING
+
+**Path A — potentiometers (headless or GUI):**
+1. user enters manual mode (`manual` CLI command or AUTO/MANUAL button)
+2. runtime enters MANUAL — automatic controller disabled
+3. ADS1115 delivers potentiometer samples via ALERT/RDY GPIO edge
+4. `ManualImuCoordinator` maps voltages to setpoints via `ManualInputMapper`
+5. setpoints pass through `Kinematics3RRS` → `ActuatorManager` → `ServoDriver`
+
+**Path B — GUI sliders:**
+1. user presses "Use GUI" button → `ManualCommandSource::Gui`
+2. user adjusts pan/tilt sliders and presses "Send manual setpoint"
+3. `setManualSetpoint(tilt_rad, pan_rad)` is called on `SystemManager`
+4. same downstream path as Path A from step 5
+
+**Path C — CLI:**
+1. user types `set <tilt_rad> <pan_rad>`
+2. `CliController` calls `setManualSetpoint()` directly
+
+**Postcondition:** platform positioned at requested setpoint; automatic tracking suspended
+
+---
+
+### UC-3: Adjust tracking threshold at runtime
+
+**Actor:** user / developer
+
+**Precondition:** system running in any active state
+
+1. user presses `+`/`-` threshold button in GUI, or types `threshold <value>` in CLI
+2. `setTrackerThreshold(value)` updates the brightness cutoff in `SunTracker`
+3. subsequent frames use the new threshold immediately
+
+**Postcondition:** tracking sensitivity changed without restart
+
+---
+
+### UC-4: Observe live pipeline data
+
+**Actor:** developer
+
+**Precondition:** Qt GUI running; observers registered in `MainWindow`
+
+The GUI displays the following in real time:
+
+| Panel | Content |
+|---|---|
+| Live preview | Camera frames converted to Qt image |
+| Mode / status labels | Current state, manual source |
+| Manual input label | Tilt voltage, pan voltage, sequence counter |
+| IMU label | ax, ay, az in m/s², computed tilt in degrees, valid flag |
+| Servo command plot | 3-channel actuator targets over time |
+| ADS1115 voltage plot | Tilt and pan potentiometer voltages over time |
+| MPU6050 plot | Accelerometer axes over time |
+
+Plot refresh rate: 33 ms timer (~30 Hz). Camera preview refresh rate: 33 ms timer.
+
+---
+
+### UC-5: Stop safely
+
+**Actor:** user
+
+**Precondition:** system in any active state
+
+1. user presses STOP button, types `quit`/`exit`, or sends SIGINT/SIGTERM
+2. runtime enters STOPPING
+3. camera stops → frame queue stops and thread joins → command queue clears → neutral kinematics command issued → actuator thread stops → driver stops
+4. runtime enters IDLE
+
+**Postcondition:** platform parked at neutral position; all threads joined; hardware released
+
+---
+
+### UC-6: Run without hardware (simulated path)
+
+**Actor:** developer / assessor
+
+**Precondition:** built without libcamera/OpenCV, or libcamera unavailable at runtime
+
+1. `defaultConfig()` selects `CameraBackend::Simulated` and `ServoDriver::StartupPolicy::LogOnly`
+2. `SimulatedPublisher` generates synthetic frames at 30 Hz via `timerfd`-paced `poll()` loop
+3. full pipeline runs — `SunTracker`, `Controller`, `ManualImuCoordinator`, `Kinematics3RRS`, `ActuatorManager` all execute normally
+4. `ServoDriver` logs commands without writing to hardware
+
+**Postcondition:** end-to-end software pipeline exercised without physical hardware
+
+---
+
+## 3. Summary
+
+| Story | Interface |
+|---|---|
+| Automatic tracking | Runtime state machine |
+| Manual via potentiometers | ADS1115 backend + MANUAL state |
+| Manual via GUI sliders | `MainWindow` pan/tilt sliders |
+| Manual via CLI | `set`, `manual`, `auto` commands |
+| State visibility | State observer + GUI labels |
+| Live signal observation | 7 registered observers + plots |
+| Runtime threshold tuning | `+`/`-` buttons or `threshold` CLI |
+| Manual source switching | "Use Pots" / "Use GUI" buttons |
+| Safe shutdown | STOPPING sequence + park on stop |
+| Simulated fallback | `SimulatedPublisher` + `LogOnly` servo |
