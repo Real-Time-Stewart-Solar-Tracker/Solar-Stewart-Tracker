@@ -1,8 +1,8 @@
 [submodule "external/libgpiod_event_demo"]
 	path = external/libgpiod_event_demo
-	url = https://github.com/berndporr/libgpiod_event_demo.git
+	url = https://github.com/berndporr/libgpiod_event_demo
 
 [submodule "external/libcamera2opencv"]
 	path = external/libcamera2opencv
-	url = https://github.com/berndporr/libcamera2opencv.git
+	url = https://github.com/berndporr/libcamera2opencv
 
