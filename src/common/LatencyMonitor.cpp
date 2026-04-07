@@ -4,363 +4,296 @@
 #include <chrono>
 #include <cstdlib>
 #include <fstream>
-#include <memory>
-#include <mutex>
+#include <sstream>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace solar {
-
-struct LatencyMonitor::ImplMutex {
-    std::mutex m;
-};
-
 namespace {
 
-double to_ms(LatencyMonitor::TimePoint a, LatencyMonitor::TimePoint b) {
-    using Ms = std::chrono::duration<double, std::milli>;
-    return std::chrono::duration_cast<Ms>(b - a).count();
-}
-
-std::int64_t to_us_since_epoch(LatencyMonitor::TimePoint t) {
-    return std::chrono::duration_cast<std::chrono::microseconds>(
-               t.time_since_epoch())
-        .count();
-}
+constexpr int kStageCapture = 0;
+constexpr int kStageEstimate = 1;
+constexpr int kStageControl = 2;
 
 } // namespace
 
-LatencyMonitor::LatencyMonitor(Logger& log, Config cfg)
-    : log_(log),
-      cfg_(std::move(cfg)),
-      mtx_(std::make_unique<ImplMutex>()) {
-    initRawCsv_();
-}
-
-LatencyMonitor::~LatencyMonitor() = default;
-
-LatencyMonitor::Stamps& LatencyMonitor::ensureEntry_(uint64_t frame_id) {
-    auto it = stamps_.find(frame_id);
-    if (it == stamps_.end()) {
-        order_.push_back(frame_id);
-        it = stamps_.emplace(frame_id, Stamps{}).first;
+LatencyMonitor::LatencyMonitor(Logger& log)
+    : log_(log) {
+    // CSV export is configured once at startup and written on shutdown.
+    if (const char* env = std::getenv("SOLAR_LATENCY_CSV"); env != nullptr) {
+        csv_path_ = env;
     }
-    return it->second;
+
+    std::lock_guard<std::mutex> lk(mutex_);
+    completed_records_.reserve(4096U);
+    resetLocked_();
 }
 
 void LatencyMonitor::registerObserver(Observer cb) {
-    std::lock_guard<std::mutex> lock(mtx_->m);
+    std::lock_guard<std::mutex> lk(mutex_);
     observer_ = std::move(cb);
 }
 
-void LatencyMonitor::initRawCsv_() {
-    if (cfg_.raw_csv_path.empty()) {
-        if (const char* env = std::getenv("SOLAR_LATENCY_CSV")) {
-            cfg_.raw_csv_path = env;
-        }
-    }
-
-    if (cfg_.raw_csv_path.empty()) {
-        rawCsvEnabled_ = false;
-        return;
-    }
-
-    rawCsvPath_ = cfg_.raw_csv_path;
-
-    const auto mode = cfg_.truncate_raw_csv ? std::ios::out | std::ios::trunc
-                                            : std::ios::out | std::ios::app;
-    rawCsv_.open(rawCsvPath_, mode);
-
-    if (!rawCsv_.is_open()) {
-        rawCsvEnabled_ = false;
-        log_.warn("LatencyMonitor: failed to open raw CSV path: " + rawCsvPath_);
-        return;
-    }
-
-    rawCsvEnabled_ = true;
-    writeRawCsvHeaderIfNeeded_();
-
-    log_.info("LatencyMonitor: raw latency CSV enabled at " + rawCsvPath_);
+void LatencyMonitor::onCapture(const std::uint64_t frame_id, const TimePoint t) {
+    // Capture timestamps open a new inflight record keyed by frame id.
+    std::lock_guard<std::mutex> lk(mutex_);
+    recordStageLocked_(frame_id, t, kStageCapture);
 }
 
-void LatencyMonitor::writeRawCsvHeaderIfNeeded_() {
-    if (!rawCsvEnabled_ || !rawCsv_.is_open()) {
-        return;
-    }
-
-    bool needHeader = cfg_.truncate_raw_csv;
-
-    if (!needHeader) {
-        std::ifstream in(rawCsvPath_, std::ios::binary);
-        if (!in.good() || in.peek() == std::ifstream::traits_type::eof()) {
-            needHeader = true;
-        }
-    }
-
-    if (needHeader) {
-        rawCsv_ << "frame_id,"
-                   "capture_us,estimate_us,control_us,actuate_us,"
-                   "vision_ms,control_ms,actuate_ms,total_ms\n";
-        rawCsv_.flush();
-    }
+void LatencyMonitor::onEstimate(const std::uint64_t frame_id, const TimePoint t) {
+    std::lock_guard<std::mutex> lk(mutex_);
+    recordStageLocked_(frame_id, t, kStageEstimate);
 }
 
-void LatencyMonitor::writeRawCsvRow_(uint64_t frame_id,
-                                     double total_ms,
-                                     double vision_ms,
-                                     double control_ms,
-                                     double actuate_ms) {
-    if (!rawCsvEnabled_ || !rawCsv_.is_open()) {
-        return;
-    }
-
-    const auto it = stamps_.find(frame_id);
-    if (it == stamps_.end()) {
-        return;
-    }
-
-    const Stamps& s = it->second;
-    if (!s.capture || !s.estimate || !s.control || !s.actuate) {
-        return;
-    }
-
-    rawCsv_ << frame_id << ','
-            << to_us_since_epoch(*s.capture) << ','
-            << to_us_since_epoch(*s.estimate) << ','
-            << to_us_since_epoch(*s.control) << ','
-            << to_us_since_epoch(*s.actuate) << ','
-            << vision_ms << ','
-            << control_ms << ','
-            << actuate_ms << ','
-            << total_ms << '\n';
+void LatencyMonitor::onControl(const std::uint64_t frame_id, const TimePoint t) {
+    std::lock_guard<std::mutex> lk(mutex_);
+    recordStageLocked_(frame_id, t, kStageControl);
 }
 
-void LatencyMonitor::pruneInflight_(TimePoint now) {
-    // 1) Prune by age
-    if (cfg_.max_inflight_age.count() > 0) {
-        while (!order_.empty()) {
-            const uint64_t oldest_id = order_.front();
-            auto it = stamps_.find(oldest_id);
-            if (it == stamps_.end()) {
-                order_.pop_front();
-                continue;
-            }
-
-            const Stamps& s = it->second;
-            if (!s.capture) {
-                break;
-            }
-
-            if ((now - *s.capture) > cfg_.max_inflight_age) {
-                stamps_.erase(it);
-                order_.pop_front();
-            } else {
-                break;
-            }
-        }
-    }
-
-    // 2) Prune by count
-    while (cfg_.max_inflight_frames > 0 && stamps_.size() > cfg_.max_inflight_frames) {
-        if (order_.empty()) {
-            break;
-        }
-
-        const uint64_t oldest_id = order_.front();
-        order_.pop_front();
-
-        auto it = stamps_.find(oldest_id);
-        if (it != stamps_.end()) {
-            stamps_.erase(it);
-        }
-    }
-}
-
-void LatencyMonitor::onCapture(uint64_t frame_id, TimePoint t_capture) {
-    std::optional<FinalizedSample> sample;
-    Observer observer;
+void LatencyMonitor::onActuate(const std::uint64_t frame_id, const TimePoint t) {
+    // Actuation closes the record so only complete traces enter the summary.
+    Observer observer_copy{};
+    CompletedRecord rec{};
+    bool have_record = false;
 
     {
-        std::unique_lock<std::mutex> lock(mtx_->m);
+        std::lock_guard<std::mutex> lk(mutex_);
+        const auto it = inflight_.find(frame_id);
+        if (it == inflight_.end()) {
+            return;
+        }
 
-        Stamps& s = ensureEntry_(frame_id);
-        s.capture = t_capture;
+        const StageTimes s = it->second;
+        inflight_.erase(it);
 
-        pruneInflight_(t_capture);
-        sample = tryFinalizeLocked_(frame_id);
-        observer = observer_;
+        // Ignore incomplete traces; only fully observed paths enter the summary.
+        if (!s.have_capture || !s.have_estimate || !s.have_control) {
+            return;
+        }
+
+        rec.frame_id = frame_id;
+        rec.t_capture_ns = nsFromEpoch_(s.t_capture);
+        rec.t_estimate_ns = nsFromEpoch_(s.t_estimate);
+        rec.t_control_ns = nsFromEpoch_(s.t_control);
+        rec.t_actuate_ns = nsFromEpoch_(t);
+
+        rec.cap_to_est_ms = msBetween_(s.t_capture, s.t_estimate);
+        rec.est_to_ctrl_ms = msBetween_(s.t_estimate, s.t_control);
+        rec.ctrl_to_act_ms = msBetween_(s.t_control, t);
+        rec.total_ms = msBetween_(s.t_capture, t);
+
+        updateStatsLocked_(cap_to_est_, rec.cap_to_est_ms);
+        updateStatsLocked_(est_to_ctrl_, rec.est_to_ctrl_ms);
+        updateStatsLocked_(ctrl_to_act_, rec.ctrl_to_act_ms);
+        updateStatsLocked_(total_, rec.total_ms);
+
+        ++completed_;
+        completed_records_.push_back(rec);
+        observer_copy = observer_;
+        have_record = true;
     }
 
-    if (sample && observer) {
-        observer(sample->frame_id,
-                 sample->capture_to_estimate_ms,
-                 sample->estimate_to_control_ms,
-                 sample->control_to_actuate_ms);
+    if (have_record && observer_copy) {
+        observer_copy(rec.frame_id, rec.cap_to_est_ms, rec.est_to_ctrl_ms, rec.ctrl_to_act_ms);
     }
 }
 
-void LatencyMonitor::onEstimate(uint64_t frame_id, TimePoint t_estimate) {
-    std::optional<FinalizedSample> sample;
-    Observer observer;
+void LatencyMonitor::reset() {
+    std::lock_guard<std::mutex> lk(mutex_);
+    resetLocked_();
+}
+
+void LatencyMonitor::printSummary() const {
+    Summary s{};
+    std::vector<CompletedRecord> records;
 
     {
-        std::unique_lock<std::mutex> lock(mtx_->m);
-
-        Stamps& s = ensureEntry_(frame_id);
-        s.estimate = t_estimate;
-
-        pruneInflight_(t_estimate);
-        sample = tryFinalizeLocked_(frame_id);
-        observer = observer_;
+        std::lock_guard<std::mutex> lk(mutex_);
+        s = summaryLocked_();
+        records = completed_records_;
     }
 
-    if (sample && observer) {
-        observer(sample->frame_id,
-                 sample->capture_to_estimate_ms,
-                 sample->estimate_to_control_ms,
-                 sample->control_to_actuate_ms);
-    }
-}
-
-void LatencyMonitor::onControl(uint64_t frame_id, TimePoint t_control) {
-    std::optional<FinalizedSample> sample;
-    Observer observer;
-
-    {
-        std::unique_lock<std::mutex> lock(mtx_->m);
-
-        Stamps& s = ensureEntry_(frame_id);
-        s.control = t_control;
-
-        pruneInflight_(t_control);
-        sample = tryFinalizeLocked_(frame_id);
-        observer = observer_;
-    }
-
-    if (sample && observer) {
-        observer(sample->frame_id,
-                 sample->capture_to_estimate_ms,
-                 sample->estimate_to_control_ms,
-                 sample->control_to_actuate_ms);
-    }
-}
-
-void LatencyMonitor::onActuate(uint64_t frame_id, TimePoint t_actuate) {
-    std::optional<FinalizedSample> sample;
-    Observer observer;
-
-    {
-        std::unique_lock<std::mutex> lock(mtx_->m);
-
-        Stamps& s = ensureEntry_(frame_id);
-        s.actuate = t_actuate;
-
-        pruneInflight_(t_actuate);
-        sample = tryFinalizeLocked_(frame_id);
-        observer = observer_;
-    }
-
-    if (sample && observer) {
-        observer(sample->frame_id,
-                 sample->capture_to_estimate_ms,
-                 sample->estimate_to_control_ms,
-                 sample->control_to_actuate_ms);
-    }
-}
-
-std::optional<LatencyMonitor::FinalizedSample>
-LatencyMonitor::tryFinalizeLocked_(uint64_t frame_id) {
-    auto it = stamps_.find(frame_id);
-    if (it == stamps_.end()) {
-        return std::nullopt;
-    }
-
-    const Stamps& s = it->second;
-    if (!s.capture || !s.estimate || !s.control || !s.actuate) {
-        return std::nullopt;
-    }
-
-    const double total_ms   = to_ms(*s.capture,  *s.actuate);
-    const double vision_ms  = to_ms(*s.capture,  *s.estimate);
-    const double control_ms = to_ms(*s.estimate, *s.control);
-    const double actuate_ms = to_ms(*s.control,  *s.actuate);
-
-    if (!stats_.initialized) {
-        stats_.initialized = true;
-        stats_.total_min_ms   = stats_.total_max_ms   = total_ms;
-        stats_.vision_min_ms  = stats_.vision_max_ms  = vision_ms;
-        stats_.control_min_ms = stats_.control_max_ms = control_ms;
-        stats_.actuate_min_ms = stats_.actuate_max_ms = actuate_ms;
-    } else {
-        stats_.total_min_ms   = std::min(stats_.total_min_ms,   total_ms);
-        stats_.total_max_ms   = std::max(stats_.total_max_ms,   total_ms);
-
-        stats_.vision_min_ms  = std::min(stats_.vision_min_ms,  vision_ms);
-        stats_.vision_max_ms  = std::max(stats_.vision_max_ms,  vision_ms);
-
-        stats_.control_min_ms = std::min(stats_.control_min_ms, control_ms);
-        stats_.control_max_ms = std::max(stats_.control_max_ms, control_ms);
-
-        stats_.actuate_min_ms = std::min(stats_.actuate_min_ms, actuate_ms);
-        stats_.actuate_max_ms = std::max(stats_.actuate_max_ms, actuate_ms);
-    }
-
-    stats_.count++;
-    stats_.total_sum_ms   += total_ms;
-    stats_.vision_sum_ms  += vision_ms;
-    stats_.control_sum_ms += control_ms;
-    stats_.actuate_sum_ms += actuate_ms;
-
-    writeRawCsvRow_(frame_id, total_ms, vision_ms, control_ms, actuate_ms);
-    if (rawCsvEnabled_) {
-        rawCsv_.flush();
-    }
-
-    FinalizedSample sample{};
-    sample.frame_id = frame_id;
-    sample.capture_to_estimate_ms = vision_ms;
-    sample.estimate_to_control_ms = control_ms;
-    sample.control_to_actuate_ms  = actuate_ms;
-    sample.total_ms = total_ms;
-
-    stamps_.erase(it);
-    return sample;
-}
-
-void LatencyMonitor::printSummary() {
-    std::lock_guard<std::mutex> lock(mtx_->m);
-
-    if (stats_.count == 0 || !stats_.initialized) {
-        log_.warn("LatencyMonitor: no complete frames to summarize");
+    if (s.completed_frames == 0U) {
+        log_.info("LatencyMonitor: no completed frames");
         return;
     }
 
-    const double n = static_cast<double>(stats_.count);
-    const double jitter_total = stats_.total_max_ms - stats_.total_min_ms;
+    // Summary line group for reportable runtime evidence.
+    log_.info("LatencyMonitor summary:");
+    log_.info("  completed frames = " + std::to_string(s.completed_frames));
 
-    log_.info("---- Latency Summary ----");
-    log_.info("Frames: " + std::to_string(stats_.count));
+    log_.info("  cap->est avg/min/max/jitter [ms] = " +
+              std::to_string(s.avg_cap_to_est_ms) + " / " +
+              std::to_string(s.min_cap_to_est_ms) + " / " +
+              std::to_string(s.max_cap_to_est_ms) + " / " +
+              std::to_string(s.jitter_cap_to_est_ms));
 
-    log_.info("Total   avg(ms)=" + std::to_string(stats_.total_sum_ms / n) +
-              " min=" + std::to_string(stats_.total_min_ms) +
-              " max=" + std::to_string(stats_.total_max_ms) +
-              " jitter=" + std::to_string(jitter_total));
+    log_.info("  est->ctrl avg/min/max/jitter [ms] = " +
+              std::to_string(s.avg_est_to_ctrl_ms) + " / " +
+              std::to_string(s.min_est_to_ctrl_ms) + " / " +
+              std::to_string(s.max_est_to_ctrl_ms) + " / " +
+              std::to_string(s.jitter_est_to_ctrl_ms));
 
-    log_.info("Vision  avg(ms)=" + std::to_string(stats_.vision_sum_ms / n) +
-              " min=" + std::to_string(stats_.vision_min_ms) +
-              " max=" + std::to_string(stats_.vision_max_ms));
+    log_.info("  ctrl->act avg/min/max/jitter [ms] = " +
+              std::to_string(s.avg_ctrl_to_act_ms) + " / " +
+              std::to_string(s.min_ctrl_to_act_ms) + " / " +
+              std::to_string(s.max_ctrl_to_act_ms) + " / " +
+              std::to_string(s.jitter_ctrl_to_act_ms));
 
-    log_.info("Control avg(ms)=" + std::to_string(stats_.control_sum_ms / n) +
-              " min=" + std::to_string(stats_.control_min_ms) +
-              " max=" + std::to_string(stats_.control_max_ms));
+    log_.info("  total avg/min/max/jitter [ms] = " +
+              std::to_string(s.avg_total_ms) + " / " +
+              std::to_string(s.min_total_ms) + " / " +
+              std::to_string(s.max_total_ms) + " / " +
+              std::to_string(s.jitter_total_ms));
 
-    log_.info("Actuate avg(ms)=" + std::to_string(stats_.actuate_sum_ms / n) +
-              " min=" + std::to_string(stats_.actuate_min_ms) +
-              " max=" + std::to_string(stats_.actuate_max_ms));
-
-    if (rawCsvEnabled_) {
-        log_.info("Raw latency CSV: " + rawCsvPath_);
+    // Export raw samples after the run so the hot path stays free of file I/O.
+    if (!csv_path_.empty()) {
+        writeCsvSnapshot_(records);
+        log_.info("  raw CSV written to: " + csv_path_);
     }
+}
+
+LatencyMonitor::Summary LatencyMonitor::summary() const {
+    std::lock_guard<std::mutex> lk(mutex_);
+    return summaryLocked_();
+}
+
+std::vector<LatencyMonitor::CompletedRecord> LatencyMonitor::completedRecords() const {
+    std::lock_guard<std::mutex> lk(mutex_);
+    return completed_records_;
+}
+
+void LatencyMonitor::pruneLocked_() {
+    if (inflight_.size() <= cap_map_size_) {
+        return;
+    }
+
+    std::vector<std::uint64_t> ids;
+    ids.reserve(inflight_.size());
+    for (const auto& kv : inflight_) {
+        ids.push_back(kv.first);
+    }
+
+    std::sort(ids.begin(), ids.end());
+
+    const std::size_t excess = inflight_.size() - cap_map_size_;
+    for (std::size_t i = 0; i < excess; ++i) {
+        inflight_.erase(ids[i]);
+    }
+}
+
+void LatencyMonitor::resetLocked_() {
+    inflight_.clear();
+    completed_records_.clear();
+    completed_ = 0U;
+
+    cap_to_est_ = {};
+    est_to_ctrl_ = {};
+    ctrl_to_act_ = {};
+    total_ = {};
+}
+
+void LatencyMonitor::recordStageLocked_(const std::uint64_t frame_id, const TimePoint t, const int stage) {
+    auto& s = inflight_[frame_id];
+    switch (stage) {
+    case kStageCapture:
+        s.have_capture = true;
+        s.t_capture = t;
+        break;
+    case kStageEstimate:
+        s.have_estimate = true;
+        s.t_estimate = t;
+        break;
+    case kStageControl:
+        s.have_control = true;
+        s.t_control = t;
+        break;
+    default:
+        return;
+    }
+    pruneLocked_();
+}
+
+void LatencyMonitor::updateStatsLocked_(Stats& stats, const double value) {
+    if (completed_ == 0U) {
+        stats.sum = value;
+        stats.min = value;
+        stats.max = value;
+        return;
+    }
+
+    stats.sum += value;
+    stats.min = std::min(stats.min, value);
+    stats.max = std::max(stats.max, value);
+}
+
+LatencyMonitor::Summary LatencyMonitor::summaryLocked_() const {
+    Summary out{};
+    out.completed_frames = completed_;
+    if (completed_ == 0U) {
+        return out;
+    }
+
+    const double n = static_cast<double>(completed_);
+
+    out.avg_cap_to_est_ms = cap_to_est_.sum / n;
+    out.min_cap_to_est_ms = cap_to_est_.min;
+    out.max_cap_to_est_ms = cap_to_est_.max;
+    out.jitter_cap_to_est_ms = cap_to_est_.max - cap_to_est_.min;
+
+    out.avg_est_to_ctrl_ms = est_to_ctrl_.sum / n;
+    out.min_est_to_ctrl_ms = est_to_ctrl_.min;
+    out.max_est_to_ctrl_ms = est_to_ctrl_.max;
+    out.jitter_est_to_ctrl_ms = est_to_ctrl_.max - est_to_ctrl_.min;
+
+    out.avg_ctrl_to_act_ms = ctrl_to_act_.sum / n;
+    out.min_ctrl_to_act_ms = ctrl_to_act_.min;
+    out.max_ctrl_to_act_ms = ctrl_to_act_.max;
+    out.jitter_ctrl_to_act_ms = ctrl_to_act_.max - ctrl_to_act_.min;
+
+    out.avg_total_ms = total_.sum / n;
+    out.min_total_ms = total_.min;
+    out.max_total_ms = total_.max;
+    out.jitter_total_ms = total_.max - total_.min;
+
+    return out;
+}
+
+void LatencyMonitor::writeCsvSnapshot_(const std::vector<CompletedRecord>& records) const {
+    if (csv_path_.empty()) {
+        return;
+    }
+
+    std::ofstream out(csv_path_, std::ios::out | std::ios::trunc);
+    if (!out.is_open()) {
+        log_.warn("LatencyMonitor: failed to open CSV path: " + csv_path_);
+        return;
+    }
+
+    out << "frame_id,t_capture_ns,t_estimate_ns,t_control_ns,t_actuate_ns,"
+           "cap_to_est_ms,est_to_ctrl_ms,ctrl_to_act_ms,total_ms\n";
+
+    for (const auto& r : records) {
+        out << r.frame_id << ','
+            << r.t_capture_ns << ','
+            << r.t_estimate_ns << ','
+            << r.t_control_ns << ','
+            << r.t_actuate_ns << ','
+            << r.cap_to_est_ms << ','
+            << r.est_to_ctrl_ms << ','
+            << r.ctrl_to_act_ms << ','
+            << r.total_ms << '\n';
+    }
+}
+
+double LatencyMonitor::msBetween_(const TimePoint a, const TimePoint b) {
+    return std::chrono::duration<double, std::milli>(b - a).count();
+}
+
+std::uint64_t LatencyMonitor::nsFromEpoch_(const TimePoint t) {
+    return static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(t.time_since_epoch()).count());
 }
 
 } // namespace solar

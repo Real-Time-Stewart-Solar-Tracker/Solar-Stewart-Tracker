@@ -1,27 +1,33 @@
 #include "app/AppConfig.hpp"
 #include "app/SystemFactory.hpp"
 #include "common/Logger.hpp"
-#include "MainWindow.hpp"
+#include "qt/MainWindow.hpp"
+#include "system/SystemManager.hpp"
 
 #include <QApplication>
 
-int main(int argc, char** argv) {
+// Qt entry point kept intentionally small.
+// Runtime composition belongs in typed configuration helpers and factories.
+int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
 
     solar::Logger log;
-    const solar::app::AppConfig cfg = solar::app::defaultConfig();
+    const solar::app::AppConfig cfg = solar::app::defaultQtConfig();
 
-    auto sys = solar::app::SystemFactory::makeSystem(log, cfg);
-    if (!sys || !sys->start()) {
-        log.error("Failed to start SystemManager");
+    auto system = solar::app::SystemFactory::makeSystem(log, cfg);
+    if (!system) {
         return 1;
     }
 
-    solar::MainWindow w(*sys);
-    w.show();
+    if (!system->start()) {
+        return 1;
+    }
+
+    solar::MainWindow window(*system);
+    window.show();
 
     const int rc = app.exec();
 
-    sys->stop();
+    system->stop();
     return rc;
 }

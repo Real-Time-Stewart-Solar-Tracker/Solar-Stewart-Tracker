@@ -10,20 +10,22 @@
 namespace solar {
 
 SunTracker::SunTracker(Logger& log, Config cfg)
-    : log_(log), cfg_(cfg) {}
-
-void SunTracker::registerEstimateCallback(EstimateCallback cb) {
-    std::lock_guard<std::mutex> lk(cbMtx_);
-    estimateCb_ = std::move(cb);
+    : log_(log),
+      cfg_(cfg) {
 }
 
-void SunTracker::setThreshold(uint8_t thr) {
-    std::lock_guard<std::mutex> lock(cfgMutex_);
+void SunTracker::registerEstimateCallback(EstimateCallback cb) {
+    std::lock_guard<std::mutex> lock(cb_mtx_);
+    estimate_cb_ = std::move(cb);
+}
+
+void SunTracker::setThreshold(const std::uint8_t thr) {
+    std::lock_guard<std::mutex> lock(cfg_mtx_);
     cfg_.threshold = thr;
 }
 
 SunTracker::Config SunTracker::config() const {
-    std::lock_guard<std::mutex> lock(cfgMutex_);
+    std::lock_guard<std::mutex> lock(cfg_mtx_);
     return cfg_;
 }
 
@@ -34,34 +36,33 @@ bool SunTracker::isFrameValid_(const FrameEvent& frame) const {
     }
 
     const std::size_t bpp = bytesPerPixel(frame.format);
-    const std::size_t minStride =
-        static_cast<std::size_t>(frame.width) * bpp;
+    const std::size_t min_stride = static_cast<std::size_t>(frame.width) * bpp;
 
     if (frame.stride_bytes <= 0) {
         log_.warn("SunTracker: stride_bytes must be positive");
         return false;
     }
 
-    if (static_cast<std::size_t>(frame.stride_bytes) < minStride) {
+    // Guard against malformed buffers before walking them row by row.
+    if (static_cast<std::size_t>(frame.stride_bytes) < min_stride) {
         log_.warn(std::string("SunTracker: stride_bytes too small for format ") +
                   pixelFormatName(frame.format));
         return false;
     }
 
-    const std::size_t required =
+    const std::size_t required_size =
         static_cast<std::size_t>(frame.stride_bytes) *
         static_cast<std::size_t>(frame.height);
 
-    if (frame.data.size() < required) {
-        log_.warn(std::string("SunTracker: frame buffer too small for format ") +
-                  pixelFormatName(frame.format));
+    if (frame.data.size() < required_size) {
+        log_.warn("SunTracker: frame buffer smaller than stride_bytes * height");
         return false;
     }
 
     return true;
 }
 
-uint8_t SunTracker::intensityAt_(const FrameEvent& frame, int x, int y) const {
+std::uint8_t SunTracker::intensityAt_(const FrameEvent& frame, const int x, const int y) const {
     const std::size_t row =
         static_cast<std::size_t>(y) * static_cast<std::size_t>(frame.stride_bytes);
 
@@ -72,26 +73,24 @@ uint8_t SunTracker::intensityAt_(const FrameEvent& frame, int x, int y) const {
         }
 
         case PixelFormat::RGB888: {
-            const std::size_t idx =
-                row + static_cast<std::size_t>(x) * 3U;
-            const uint8_t r = frame.data[idx + 0U];
-            const uint8_t g = frame.data[idx + 1U];
-            const uint8_t b = frame.data[idx + 2U];
+            const std::size_t idx = row + static_cast<std::size_t>(x) * 3U;
+            const std::uint8_t r = frame.data[idx + 0U];
+            const std::uint8_t g = frame.data[idx + 1U];
+            const std::uint8_t b = frame.data[idx + 2U];
 
-            return static_cast<uint8_t>(
+            return static_cast<std::uint8_t>(
                 (77U * static_cast<unsigned>(r) +
                  150U * static_cast<unsigned>(g) +
                  29U * static_cast<unsigned>(b)) >> 8U);
         }
 
         case PixelFormat::BGR888: {
-            const std::size_t idx =
-                row + static_cast<std::size_t>(x) * 3U;
-            const uint8_t b = frame.data[idx + 0U];
-            const uint8_t g = frame.data[idx + 1U];
-            const uint8_t r = frame.data[idx + 2U];
+            const std::size_t idx = row + static_cast<std::size_t>(x) * 3U;
+            const std::uint8_t b = frame.data[idx + 0U];
+            const std::uint8_t g = frame.data[idx + 1U];
+            const std::uint8_t r = frame.data[idx + 2U];
 
-            return static_cast<uint8_t>(
+            return static_cast<std::uint8_t>(
                 (77U * static_cast<unsigned>(r) +
                  150U * static_cast<unsigned>(g) +
                  29U * static_cast<unsigned>(b)) >> 8U);
@@ -101,95 +100,82 @@ uint8_t SunTracker::intensityAt_(const FrameEvent& frame, int x, int y) const {
     return 0U;
 }
 
+// Image-thresholding stage for sun-centre estimation.
 void SunTracker::onFrame(const FrameEvent& frame) {
     if (!isFrameValid_(frame)) {
         return;
     }
 
-    Config cfgCopy;
+    Config cfg_copy;
     {
-        std::lock_guard<std::mutex> lock(cfgMutex_);
-        cfgCopy = cfg_;
+        std::lock_guard<std::mutex> lock(cfg_mtx_);
+        cfg_copy = cfg_;
     }
 
-    const int w = frame.width;
-    const int h = frame.height;
-    const uint8_t thr = cfgCopy.threshold;
+    const int width = frame.width;
+    const int height = frame.height;
+    const std::uint8_t threshold = cfg_copy.threshold;
 
-    double sumX = 0.0;
-    double sumY = 0.0;
-    std::size_t count = 0;
+    double weighted_sum_x = 0.0;
+    double weighted_sum_y = 0.0;
+    double weight_sum = 0.0;
+    std::size_t bright_count = 0U;
 
-    double wSum = 0.0;
-    double wSumX = 0.0;
-    double wSumY = 0.0;
-
-    for (int y = 0; y < h; ++y) {
-        for (int x = 0; x < w; ++x) {
-            const uint8_t px = intensityAt_(frame, x, y);
-            if (px >= thr) {
-                ++count;
-                sumX += static_cast<double>(x);
-                sumY += static_cast<double>(y);
-
-                const double weight = static_cast<double>(px);
-                wSum += weight;
-                wSumX += weight * static_cast<double>(x);
-                wSumY += weight * static_cast<double>(y);
+    // A simple thresholded centroid is enough for the bright simulated sun spot.
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            const std::uint8_t px = intensityAt_(frame, x, y);
+            if (px < threshold) {
+                continue;
             }
+
+            ++bright_count;
+
+            const double weight = static_cast<double>(px);
+            weight_sum += weight;
+            weighted_sum_x += weight * static_cast<double>(x);
+            weighted_sum_y += weight * static_cast<double>(y);
         }
     }
 
-    SunEstimate est;
-    est.frame_id   = frame.frame_id;
-    est.t_estimate = std::chrono::steady_clock::now();
+    SunEstimate estimate{};
+    estimate.frame_id = frame.frame_id;
+    estimate.t_estimate = std::chrono::steady_clock::now();
 
-    if (count < cfgCopy.min_pixels) {
-        est.cx = 0.0f;
-        est.cy = 0.0f;
-        est.confidence = 0.0f;
+    if (bright_count < cfg_copy.min_pixels || weight_sum <= 0.0) {
+        estimate.cx = 0.0F;
+        estimate.cy = 0.0F;
+        estimate.confidence = 0.0F;
 
         EstimateCallback cb;
         {
-            std::lock_guard<std::mutex> lk(cbMtx_);
-            cb = estimateCb_;
+            std::lock_guard<std::mutex> lock(cb_mtx_);
+            cb = estimate_cb_;
         }
         if (cb) {
-            cb(est);
+            cb(estimate);
         }
         return;
     }
 
-    double cx = 0.0;
-    double cy = 0.0;
+    estimate.cx = static_cast<float>(weighted_sum_x / weight_sum);
+    estimate.cy = static_cast<float>(weighted_sum_y / weight_sum);
 
-    if (wSum > 0.0) {
-        cx = wSumX / wSum;
-        cy = wSumY / wSum;
-    } else {
-        cx = sumX / static_cast<double>(count);
-        cy = sumY / static_cast<double>(count);
-    }
+    const std::size_t min_pixels = std::max<std::size_t>(1U, cfg_copy.min_pixels);
+    double ratio = static_cast<double>(bright_count) / static_cast<double>(min_pixels);
+    double confidence = (ratio - 1.0) / 9.0;
+    confidence = std::clamp(confidence, 0.0, 1.0);
+    confidence = std::clamp(confidence * static_cast<double>(cfg_copy.confidence_scale), 0.0, 1.0);
 
-    est.cx = static_cast<float>(cx);
-    est.cy = static_cast<float>(cy);
-
-    const std::size_t minPix = std::max<std::size_t>(1, cfgCopy.min_pixels);
-    const double ratio =
-        static_cast<double>(count) / static_cast<double>(minPix);
-
-    double conf01 = (ratio - 1.0) / 9.0;
-    conf01 = std::clamp(conf01, 0.0, 1.0);
-    conf01 = std::clamp(conf01 * static_cast<double>(cfgCopy.confidence_scale), 0.0, 1.0);
-    est.confidence = static_cast<float>(conf01);
+    estimate.confidence = static_cast<float>(confidence);
 
     EstimateCallback cb;
     {
-        std::lock_guard<std::mutex> lk(cbMtx_);
-        cb = estimateCb_;
+        std::lock_guard<std::mutex> lock(cb_mtx_);
+        cb = estimate_cb_;
     }
     if (cb) {
-        cb(est);
+        cb(estimate);
     }
 }
 
