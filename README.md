@@ -4,6 +4,9 @@
   <img src="media/logo.jpeg" alt="SunLock Lab Solar Stewart Tracker" width="750">
 </p>
 
+[![Build and Test](https://github.com/Real-Time-Stewart-Solar-Tracker/Solar-Stewart-Tracker/actions/workflows/ci.yml/badge.svg)](https://github.com/Real-Time-Stewart-Solar-Tracker/Solar-Stewart-Tracker/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/Real-Time-Stewart-Solar-Tracker/Solar-Stewart-Tracker)](https://github.com/Real-Time-Stewart-Solar-Tracker/Solar-Stewart-Tracker/releases)
 
 Real-time embedded **C++17** software for solar tracking using a **3-RRS Stewart-type parallel mechanism** on **Raspberry Pi / Linux**.
 
@@ -20,6 +23,7 @@ This project implements an event-driven pipeline in which camera frames are deli
 </p>
 
 ---
+
 <p align="center">
   <strong>Explore the full generated developer reference, architecture pages, and API documentation.</strong><br>
   📘 <a href="https://real-time-stewart-solar-tracker.github.io/Solar-Stewart-Tracker/">
@@ -28,6 +32,7 @@ This project implements an event-driven pipeline in which camera frames are deli
 </p>
 
 ---
+
 ## Table of Contents
 
 - [Social Media](#social-media)
@@ -35,6 +40,7 @@ This project implements an event-driven pipeline in which camera frames are deli
 - [Project Management](#project-management)
 - [Key Features](#key-features)
 - [System Architecture](#system-architecture)
+- [Threading and Event Model](#threading-and-event-model)
 - [Sequence Diagram](#sequence-diagram)
 - [Circuit Diagram](#circuit-diagram)
 - [Repository Structure](#repository-structure)
@@ -58,7 +64,7 @@ This project implements an event-driven pipeline in which camera frames are deli
 
 We actively document the development, testing, and realtime performance of the **Solar Stewart Tracker** to promote transparency, reproducibility, and engagement with the engineering community.
 
-📌 **TikTok (Primary Platform)**  
+📌 **TikTok**
 https://www.tiktok.com/@sunlock.lab_2
 
 Content includes:
@@ -94,17 +100,19 @@ The main software path is:
 
 **Camera → SunTracker → Controller → ManualImuCoordinator → Kinematics3RRS → ActuatorManager → ServoDriver**
 
+For a detailed overview, see [docs/project_overview.md](docs/project_overview.md).
+
 ---
 
 ## Project Management
 
-Development was tracked through GitHub issues, milestones, branches, pull requests, and tagged releases.
+Development was organised through GitHub Milestones, Issues, Pull Requests, and tagged Releases:
 
-See:
-- Issues for feature planning and bug tracking
-- Milestones for delivery stages
-- Pull requests for reviewed changes
-- Releases 
+- [Milestones](https://github.com/Real-Time-Stewart-Solar-Tracker/Solar-Stewart-Tracker/milestones?state=closed)
+- [Issues](https://github.com/Real-Time-Stewart-Solar-Tracker/Solar-Stewart-Tracker/issues?q=is%3Aissue+state%3Aclosed)
+- [Pull Requests](https://github.com/Real-Time-Stewart-Solar-Tracker/Solar-Stewart-Tracker/pulls?q=is%3Apr+is%3Aclosed)
+- [Releases](https://github.com/Real-Time-Stewart-Solar-Tracker/Solar-Stewart-Tracker/releases)
+
 ---
 
 ## Key Features
@@ -140,6 +148,9 @@ See:
   - Doxygen-ready source tree
   - structured repository layout by subsystem
 
+For class design rationale, see [docs/solid_justification.md](docs/solid_justification.md).
+For requirements, see [docs/requirements.md](docs/requirements.md).
+
 ---
 
 ## System Architecture
@@ -152,49 +163,17 @@ The repository is organised around a staged runtime pipeline.
 
 ### Core Modules
 
-- **ICamera**  
-  Abstract camera interface used by the system.
-
-- **LibcameraPublisher**  
-  Raspberry Pi / Linux camera backend when `libcamera` is available.
-
-- **SimulatedPublisher**  
-  Fallback or simulation camera backend.
-
-- **SystemManager**  
-  Top-level orchestrator for state, queues, callbacks, and worker threads.
-
-- **SunTracker**  
-  Vision module that finds the bright target and estimates sun position.
-
-- **Controller**  
-  Converts tracking error into platform tilt/pan setpoints.
-
-- **ManualImuCoordinator**  
-  Coordinates manual input ownership and optional IMU-based correction.
-
-- **Kinematics3RRS**  
-  Converts platform setpoints into actuator-space commands.
-
-- **ActuatorManager**  
-  Safety shaping layer for command limiting.
-
-- **ServoDriver**  
-  Final actuator output layer.
-
-- **LatencyMonitor**  
-  Measures timing across the userspace pipeline.
-
-### Threading Model
-
-The runtime is structured as a **multi-threaded, event-driven system** where **blocking I/O is used to wake up threads**, and callbacks propagate data through the processing pipeline.
-
-Separate execution contexts are used for:
-
-- **camera / backend context**: frame acquisition and callback delivery
-- **control thread**: vision, control, coordination, and kinematics
-- **actuator thread**: safety filtering and output application
-- **main / event loop**: application lifecycle and optional UI / event handling
+- **ICamera** — abstract camera interface used by the system.
+- **LibcameraPublisher** — standalone direct libcamera backend implementing `ICamera`. Available as an alternative to the libcamera2opencv-based adapter assembled in `SystemFactory`.
+- **SimulatedPublisher** — fallback or simulation camera backend.
+- **SystemManager** — top-level orchestrator for state, queues, callbacks, and worker threads.
+- **SunTracker** — vision module that finds the bright target and estimates sun position.
+- **Controller** — converts tracking error into platform tilt/pan setpoints.
+- **ManualImuCoordinator** — coordinates manual input ownership and optional IMU-based correction.
+- **Kinematics3RRS** — converts platform setpoints into actuator-space commands.
+- **ActuatorManager** — safety shaping layer for command limiting.
+- **ServoDriver** — final actuator output layer.
+- **LatencyMonitor** — measures timing across the userspace pipeline.
 
 ### Queue Policy
 
@@ -204,6 +183,27 @@ Inter-stage communication uses bounded queues with a freshest-data policy:
 - **command queue capacity:** 8
 
 Both queues use `push_latest(...)`. When a queue is full, the oldest item is discarded before the newest item is inserted. This bounds memory use, prevents unbounded backlog, and keeps the control path biased toward current data rather than stale queued work.
+
+For detailed architecture, callback map, and blocking I/O map, see [docs/system_architecture.md](docs/system_architecture.md).
+For the runtime state machine, see [docs/state_machine.md](docs/state_machine.md).
+
+---
+
+## Threading and Event Model
+
+| Thread | Responsibility | Blocking Wakeup Source |
+|---|---|---|
+| Camera worker | Frame acquisition | timerfd + poll() (simulated) · libcamera callback (hardware) |
+| Control worker | Vision + control (automatic only) | frame_q\_ condition_variable wait |
+| Actuator worker | Safety conditioning + servo output | cmd_q\_ condition_variable wait |
+| GuiManualDispatcher | GUI manual setpoint dispatch | GuiManualDispatcher queue condition_variable wait |
+| ADS1115 GPIO callback | Pot sample read + dispatch | ALERT/RDY GPIO edge (libgpiod) |
+| MPU6050 GPIO callback | IMU sample read + forward | Data-ready GPIO edge (libgpiod) |
+| Main thread | App lifecycle, CLI, signals | poll() on signalfd / timerfd / stdin |
+
+Every thread blocks on a blocking primitive (poll, condition_variable, or GPIO edge wait) and wakes only when an external event occurs. No thread uses polling loops or sleep-based timing anywhere in the codebase.
+
+For the full callback map, blocking I/O map, and realtime execution model, see [docs/system_architecture.md](docs/system_architecture.md) and [docs/realtime_analysis.md](docs/realtime_analysis.md).
 
 ---
 
@@ -319,7 +319,7 @@ sequenceDiagram
 ## Circuit Diagram
 
 <p align="center">
-  <img src="diagrams/circuit_diagram.jpeg" alt="Circuit Diagram" width="900">
+  <img src="diagrams/circuit_diagram.png" alt="Circuit Diagram" width="900">
 </p>
 
 The hardware setup connects:
@@ -333,8 +333,8 @@ The hardware setup connects:
 
 The PCA9685 generates PWM signals for the servos, while I2C provides communication between the Raspberry Pi, the manual-input ADC, the IMU, and the actuator driver layer.
 
-> **Exact connection mapping:** see [`docs/hardware_connections.md`](docs/hardware_connections.md).  
-> This document is the source of truth for physical Raspberry Pi pin numbers, I2C wiring, GPIO interrupt pins, servo channel assignments, potentiometer wiring, and shared-ground requirements.
+For exact pin-level connections, see [docs/hardware_connections.md](docs/hardware_connections.md).
+The editable Fritzing source file is available at [`diagrams/circuit_diagram.fzz`](diagrams/circuit_diagram.fzz).
 
 ---
 
@@ -408,6 +408,8 @@ Solar-Stewart-Tracker/
 
 **Grand Total: £217.00**
 
+For a detailed bill of materials, see [docs/BOM.md](docs/BOM.md).
+
 ---
 
 ## Dependencies
@@ -422,14 +424,9 @@ Solar-Stewart-Tracker/
 
 ### Optional
 
-- **libcamera**  
-  Enables the Raspberry Pi camera backend.
-
-- **Qt5 Widgets / Charts**  
-  Enables the optional Qt GUI target.
-
-- **OpenCV**  
-  Enables optional image-conversion and viewer support where available.
+- **libcamera** — enables the Raspberry Pi camera backend.
+- **Qt5 Widgets / Charts** — enables the optional Qt GUI target.
+- **OpenCV** — enables optional image-conversion and viewer support where available.
 
 ### Linux Packages
 
@@ -449,6 +446,8 @@ sudo apt install -y libopencv-dev
 sudo apt install -y doxygen graphviz
 ```
 
+For a complete dependency reference, see [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md).
+
 ---
 
 ## Cloning
@@ -466,19 +465,15 @@ If you already cloned without submodules, initialise them with:
 git submodule update --init --recursive
 ```
 
+> **Note:** The GitHub auto-generated source ZIP does not include submodule contents. Always clone with `--recurse-submodules`.
+
 ### External Repositories Used by This Project
 
 The repository includes these submodules under `external/`:
 
-```text
-external/libcamera2opencv
-external/libgpiod_event_demo
-```
+- `external/libcamera2opencv` → https://github.com/berndporr/libcamera2opencv.git
+- `external/libgpiod_event_demo` → https://github.com/berndporr/libgpiod_event_demo.git
 
-Their configured sources are:
-
-- `external/libcamera2opencv` → `https://github.com/berndporr/libcamera2opencv.git`
-- `external/libgpiod_event_demo` → `https://github.com/berndporr/libgpiod_event_demo.git`
 ---
 
 ## Building
@@ -528,6 +523,8 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DSOLAR_TRY_LIBCAMERA=OF
 ```bash
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DSOLAR_ENABLE_HW_TESTS=ON
 ```
+
+For a full build and run reference, see [docs/build_and_run.md](docs/build_and_run.md).
 
 ---
 
@@ -579,7 +576,8 @@ The system enters `FAULT` if required startup steps fail or mandatory hardware i
 ### Runtime Latency Capture
 
 ```bash
-./scripts/run_latency.sh
+mkdir -p artefacts
+SOLAR_LATENCY_CSV=artefacts/latency.csv ./build/solar_tracker
 ```
 
 This writes latency data to:
@@ -588,7 +586,7 @@ This writes latency data to:
 artefacts/latency.csv
 ```
 
-For a fuller command reference, see [`docs/build_and_run.md`](docs/build_and_run.md).
+For reproducibility steps and environment setup, see [docs/REPRODUCIBILITY.md](docs/REPRODUCIBILITY.md).
 
 ---
 
@@ -639,9 +637,13 @@ ctest --test-dir build -C Release --output-on-failure
 - MPU6050 publisher
 - Linux I2C hardware smoke path
 
+For the full testing strategy and test matrix, see [docs/testing.md](docs/testing.md).
+
 ---
 
 ## Realtime Evidence
+
+Latency was measured on real hardware using the **libcamera2opencv** backend (IMX219 CSI sensor, 640×480, RGB888, 30 fps) on a Raspberry Pi 5. Frame-interval analysis (standard deviation 4.46 ms) confirms the measurements reflect genuine camera sensor timing, not synthetic simulation.
 
 The measured software-side pipeline is:
 
@@ -649,45 +651,44 @@ The measured software-side pipeline is:
 
 All measurements are taken using monotonic timestamps recorded inside the software pipeline and exported to `artefacts/latency.csv`.
 
-### Latency Results
+### Latency Results (1367 frames, 46.6 seconds)
 
 | Metric | Average (ms) | Minimum (ms) | Maximum (ms) | Jitter (ms) |
 |---|---:|---:|---:|---:|
-| L_total | 8.369570 | 6.829599 | 14.565364 | 7.735765 |
-| L_vision | 8.242496 | 6.755912 | 14.530086 | 7.774174 |
-| L_control | 0.014822 | 0.006038 | 0.363637 | 0.357599 |
-| L_actuation | 0.112253 | 0.019426 | 3.095969 | 3.076543 |
+| L_total | 2.397656 | 1.869860 | 4.553350 | 2.683490 |
+| L_vision | 2.379005 | 1.859520 | 4.531040 | 2.671520 |
+| L_control | 0.001495 | 0.000500 | 0.070347 | 0.069847 |
+| L_actuation | 0.017155 | 0.008648 | 0.156285 | 0.147637 |
 
 ### Interpretation
 
-- average end-to-end software latency is approximately **8.37 ms**
-- worst-case measured software latency is approximately **14.57 ms**
-- measured timing remains below a typical **30 Hz** frame period of approximately **33 ms**
+- average end-to-end software latency is approximately **2.40 ms**
+- worst-case measured software latency is approximately **4.55 ms**
+- processing uses approximately **7.3%** of a 30 Hz frame period (33 ms)
 - measurements represent the userspace software path only, not full physical actuator motion or mechanical settling time
+
+For detailed latency analysis, design decisions informed by measurements, and frame-interval evidence, see [docs/latency_measurement.md](docs/latency_measurement.md).
+For the realtime execution model and event-driven architecture, see [docs/realtime_analysis.md](docs/realtime_analysis.md).
 
 ---
 
 ## Documentation
 
-The repository includes a Doxygen configuration file for API documentation generation.
+### Doxygen API Reference
 
-### Generate Doxygen Documentation
+The generated developer reference is hosted online:
+
+https://real-time-stewart-solar-tracker.github.io/Solar-Stewart-Tracker/
+
+To generate locally:
 
 ```bash
 doxygen Doxyfile
 ```
 
-Open locally at:
+Open at `docs/html/index.html`.
 
-```text
-docs/html/index.html
-```
-## Generated Doxygen documentation for the codebase is available here:
-
-- **Project Documentation Website:**  
-  https://real-time-stewart-solar-tracker.github.io/Solar-Stewart-Tracker/
-
-### Source Areas Covered by the Documentation Build
+### Source Areas Covered
 
 - `src/actuators`
 - `src/app`
@@ -699,43 +700,43 @@ docs/html/index.html
 - `src/vision`
 - `src/qt`
 
-Additional project documentation is provided under `docs/`, including:
+### Project Documentation
 
-- `docs/project_overview.md`
-- `docs/system_architecture.md`
-- `docs/state_machine.md`
-- `docs/realtime_analysis.md`
-- `docs/latency_measurement.md`
-- `docs/testing.md`
-- `docs/solid_justification.md`
-- `docs/requirements.md`
-- `docs/user_stories_use_cases.md`
-- `docs/DEPENDENCIES.md`
-- `docs/REPRODUCIBILITY.md`
-- `docs/build_and_run.md`
-- `docs/hardware_connections.md`
+| Document | Description |
+|---|---|
+| [docs/project_overview.md](docs/project_overview.md) | Project summary |
+| [docs/system_architecture.md](docs/system_architecture.md) | Architecture, callback map, blocking I/O map |
+| [docs/state_machine.md](docs/state_machine.md) | Runtime state machine |
+| [docs/realtime_analysis.md](docs/realtime_analysis.md) | Realtime execution model |
+| [docs/latency_measurement.md](docs/latency_measurement.md) | Quantitative latency evidence |
+| [docs/testing.md](docs/testing.md) | Testing strategy and test matrix |
+| [docs/solid_justification.md](docs/solid_justification.md) | SOLID class design rationale |
+| [docs/requirements.md](docs/requirements.md) | Functional and non-functional requirements |
+| [docs/user_stories_use_cases.md](docs/user_stories_use_cases.md) | User stories and use cases |
+| [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) | Dependency reference |
+| [docs/REPRODUCIBILITY.md](docs/REPRODUCIBILITY.md) | Reproducibility guide |
+| [docs/build_and_run.md](docs/build_and_run.md) | Build and run reference |
+| [docs/hardware_connections.md](docs/hardware_connections.md) | Pin-level wiring reference |
+| [docs/BOM.md](docs/BOM.md) | Bill of materials |
 
 ---
 
 ## Authors and Contributions
 
-**Fadi Halteh (3127931H)**  
-Designed and implemented the event-driven system architecture, including runtime orchestration, state handling, and the bounded queue pipeline. Responsible for integrating the major software stages into the full runtime path.  
-Implemented the MPU6050 (IMU) and ADS1115 (manual input) integration within the system, including their event-driven data handling and coordination with the control pipeline.  Also responsible for the system architecture design and creation of the technical diagrams (pipeline, threading, and system architecture).
+**Fadi Halteh (3127931H)**
+Designed and implemented the event-driven system architecture, including runtime orchestration, state handling, and the bounded queue pipeline. Responsible for integrating the major software stages into the full runtime path. Implemented the MPU6050 (IMU) and ADS1115 (manual input) integration within the system, including their event-driven data handling and coordination with the control pipeline. Also responsible for the system architecture design and creation of the technical diagrams (pipeline, threading, and system architecture).
 
-**Jichao Wang (3137140W)**  
+**Jichao Wang (3137140W)**
 Developed the 3-RRS inverse kinematics model and core application setup, including configuration, factory creation, and application entry structure. Responsible for translating platform setpoints into actuator-space commands.
 
-**Ziming Yan (2429452Y)**  
+**Ziming Yan (2429452Y)**
 Developed the vision subsystem and user interface components, including the SunTracker detection pipeline and Qt-based control panel. Integrated visual feedback, overlays, and runtime interaction into the system.
 
-**Tareq A M Almzanin (3139787A)**  
+**Tareq A M Almzanin (3139787A)**
 Implemented the control layer translating vision estimates into platform motion, including closed-loop control logic and manual override behaviour. Contributed to the definition of shared data types and the control-side software path.
 
-**Zhenyu Zhu (3099498Z)**  
+**Zhenyu Zhu (3099498Z)**
 Implemented the low-level actuator interface including PCA9685 integration and servo control, along with latency measurement instrumentation. Responsible for hardware abstraction and timing analysis across the system pipeline.
-
-*Source: project members document.*
 
 ---
 
@@ -754,23 +755,14 @@ Their guidance and infrastructure helped shape both the realtime architecture an
 
 ## License
 
-This project is released under the license included in this repository:
-
-```text
-LICENSE
-```
+This project is released under the [MIT License](LICENSE).
 
 ### External Components and Attribution
 
 The repository also includes or depends on external open-source components. Please credit and use them according to their original licenses.
 
-#### libcamera2opencv
-- The libcamera-to-OpenCV wrapper is sourced from Bernd Porr.
-- Repository: https://github.com/berndporr/libcamera2opencv
-
-#### libgpiod_event_demo
-- GPIO event-driven reference code is sourced from Bernd Porr.
-- Repository: https://github.com/berndporr/libgpiod_event_demo
+- **libcamera2opencv** — https://github.com/berndporr/libcamera2opencv
+- **libgpiod_event_demo** — https://github.com/berndporr/libgpiod_event_demo
 
 ---
 
