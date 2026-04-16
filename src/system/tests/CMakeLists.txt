@@ -4,6 +4,7 @@ add_executable(test_system
     ${SOLAR_TEST_SUPPORT_DIR}/test_main.cpp
     test_systemmanager_statemachine.cpp
     test_systemmanager_imu_shadow.cpp
+    test_systemmanager_pipeline.cpp
 )
 
 target_include_directories(test_system PRIVATE
@@ -31,3 +32,7 @@ add_test(NAME SystemManager_ImuShadow_CameraStartFailureEntersFault COMMAND test
 add_test(NAME SystemManager_ImuShadow_StopFromIdleIsIdempotent COMMAND test_system --run SystemManager_ImuShadow_StopFromIdleIsIdempotent)
 add_test(NAME SystemManager_ImuLive_StartsNormallyWhenNoImuBackendConfigured COMMAND test_system --run SystemManager_ImuLive_StartsNormallyWhenNoImuBackendConfigured)
 add_test(NAME SystemManager_ImuShadow_StateObserverReceivesTransitions COMMAND test_system --run SystemManager_ImuShadow_StateObserverReceivesTransitions)
+
+add_test(NAME SystemManager_automatic_pipeline_produces_actuator_commands COMMAND test_system --run SystemManager_automatic_pipeline_produces_actuator_commands)
+add_test(NAME SystemManager_multiple_frames_produce_multiple_commands COMMAND test_system --run SystemManager_multiple_frames_produce_multiple_commands)
+add_test(NAME SystemManager_gui_manual_produces_commands_without_camera_frames COMMAND test_system --run SystemManager_gui_manual_produces_commands_without_camera_frames)
