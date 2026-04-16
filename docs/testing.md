@@ -188,6 +188,10 @@ Executable: `test_common_core` — Source: `src/common/tests/test_threadsafequeu
 | `ThreadSafeQueue_bounded_push_latest_drops_oldest` | Freshest-value overwrite semantics |
 | `ThreadSafeQueue_wait_pop_blocks_then_wakes` | Blocking wake-up behaviour |
 | `ThreadSafeQueue_stop_unblocks_waiters_and_returns_nullopt_when_empty` | Stop/unblock behaviour |
+| `ThreadSafeQueue_concurrent_producers_and_consumer_no_data_loss` | Multi-threaded data integrity |
+| `ThreadSafeQueue_concurrent_wait_pop_wakes_all_consumers` | Concurrent consumer wakeup |
+| `ThreadSafeQueue_push_latest_under_contention_keeps_freshest` | Freshest-data policy under contention |
+| `LatencyMonitor_reports_jitter_over_multiple_records` | Jitter reporting correctness |
 
 ### 5.9 LatencyMonitor
 
@@ -198,8 +202,6 @@ Executable: `test_common_core` — Source: `src/common/tests/test_latency_monito
 | `LatencyMonitor_accepts_ordered_timestamps_and_prints` | Ordered timestamp handling |
 | `LatencyMonitor_handles_out_of_order_calls_without_crashing` | Out-of-order robustness |
 | `LatencyMonitor_prunes_inflight_frames_under_pressure_without_crashing` | In-flight frame pruning under pressure |
-
-> **Note:** A fourth test (`LatencyMonitor_reports_jitter_over_multiple_records`) is compiled into `test_common_core` but is not individually registered as a CTest entry.
 
 ### 5.10 SystemManager
 
@@ -220,7 +222,9 @@ Sources: `src/system/tests/test_systemmanager_statemachine.cpp`, `src/system/tes
 | `SystemManager_ImuShadow_StopFromIdleIsIdempotent` | Stop from IDLE is a safe no-op |
 | `SystemManager_ImuLive_StartsNormallyWhenNoImuBackendConfigured` | Live mode degrades gracefully without IMU |
 | `SystemManager_ImuShadow_StateObserverReceivesTransitions` | State observer receives startup transitions |
-
+| `SystemManager_automatic_pipeline_produces_actuator_commands` | End-to-end automatic pipeline |
+| `SystemManager_multiple_frames_produce_multiple_commands` | Sustained pipeline throughput |
+| `SystemManager_gui_manual_produces_commands_without_camera_frames` | GUI manual path independence |
 ---
 
 ## 6. Hardware-Adjacent Tests (`SOLAR_ENABLE_HW_TESTS=ON`)

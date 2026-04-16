@@ -214,7 +214,7 @@ build/src/qt/solar_tracker_qt   (only if Qt5 Widgets and Qt5 Charts were found)
 ### Qt GUI application
 
 ```bash
-./build/solar_tracker_qt
+./build/src/qt/solar_tracker_qt
 ```
 
 ---

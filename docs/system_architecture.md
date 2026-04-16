@@ -48,6 +48,37 @@ The control thread handles only the automatic path. It is not involved in either
 This staged structure is appropriate because the taught approach is event-driven userspace code built around callbacks, blocking waits, and clean class interfaces rather than polling loops or single-threaded delay-based control.
 
 ---
+## Callback Map
+
+| Publisher | Subscriber | Callback Type | Registration Method |
+|---|---|---|---|
+| ICamera | SystemManager | std::function\<void(const FrameEvent&)\> | registerFrameCallback() |
+| SunTracker | SystemManager | std::function\<void(const SunEstimate&)\> | registerEstimateCallback() |
+| Controller | SystemManager | std::function\<void(const PlatformSetpoint&)\> | registerSetpointCallback() |
+| Kinematics3RRS | SystemManager | std::function\<void(const ActuatorCommand&)\> | registerCommandCallback() |
+| ActuatorManager | SystemManager | std::function\<void(const ActuatorCommand&)\> | registerSafeCommandCallback() |
+| IIMU | BackendCoordinator | abstract CallbackInterface::hasSample() | registerEventCallback() |
+| ADS1115ManualInput | BackendCoordinator | std::function\<void(const ManualPotSample&)\> | registerCallback() |
+| LatencyMonitor | SystemManager | std::function\<void(...)\> | registerObserver() |
+
+Inter-class communication uses callbacks (not getters) for incoming events and setters for outgoing control, consistent with the taught event-driven architecture.
+---
+
+## Threading and Blocking I/O Map
+
+| Thread | Responsibility | Blocking Wakeup Source |
+|---|---|---|
+| Camera worker | Frame acquisition | timerfd + poll() (simulated) · libcamera callback (hardware) |
+| Control worker | Vision + control (automatic only) | frame_q\_ condition_variable wait |
+| Actuator worker | Safety conditioning + servo output | cmd_q\_ condition_variable wait |
+| GuiManualDispatcher | GUI manual setpoint dispatch | GuiManualDispatcher queue condition_variable wait |
+| ADS1115 GPIO callback | Pot sample read + dispatch | ALERT/RDY GPIO edge (libgpiod) |
+| MPU6050 GPIO callback | IMU sample read + forward | Data-ready GPIO edge (libgpiod) |
+| Main thread | App lifecycle, CLI, signals | poll() on signalfd / timerfd / stdin |
+
+Every thread blocks on a kernel-backed primitive and wakes only when an external event occurs. No thread uses polling loops or sleep-based timing anywhere in the codebase.
+
+---
 
 ## Diagram 1 — UML Class Diagram
 
