@@ -16,6 +16,11 @@
  * - @ref FrameEvent::data contains width * height bytes
  *
  * Internal camera-native formats may differ. That stays hidden here.
+ *
+ * Note: the default runtime assembly in SystemFactory uses the
+ * libcamera2opencv-based adapter instead of this class. This backend
+ * remains available as a standalone alternative that does not depend
+ * on OpenCV or the libcamera2opencv wrapper.
  */
 
 #include "common/Logger.hpp"

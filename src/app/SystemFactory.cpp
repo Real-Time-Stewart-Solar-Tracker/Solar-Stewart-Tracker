@@ -11,6 +11,8 @@
 #include <opencv2/imgproc.hpp>
 #endif
 
+#include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <memory>
 #include <utility>
@@ -47,8 +49,7 @@ void copyMatIntoFrameEvent(const cv::Mat& src,
 }
 
 class Libcamera2OpenCvCameraAdapter final
-    : public solar::ICamera
-    , private Libcam2OpenCV::Callback {
+    : public solar::ICamera {
 public:
     Libcamera2OpenCvCameraAdapter(Logger& log, const LibcameraConfig& cfg)
         : log_(log) {
@@ -72,7 +73,10 @@ public:
         }
 
         try {
-            camera_.registerCallback(this);
+            camera_.registerCallback([this](const cv::Mat& frame,
+                                            const libcamera::ControlList& controls) {
+                onFrame_(frame, controls);
+            });
             camera_.start(settings_);
             running_ = true;
             log_.info("SystemFactory: using libcamera2opencv camera backend");
@@ -97,7 +101,53 @@ public:
     }
 
 private:
-    void hasFrame(const cv::Mat& frame, const libcamera::ControlList&) override {
+    /**
+     * @brief Detect whether the received Mat has a stride mismatch.
+     *
+     * The FormatConverter NATIVE path creates a cv::Mat without accounting
+     * for ISP stride padding. On Raspberry Pi 5, RGB888 buffers often use
+     * a stride of width*4 bytes despite only 3 bytes per pixel being valid.
+     * This manifests as a tripled/interlaced image.
+     *
+     * Detection: if the image is tripled, row 0 and row rows/3 in the
+     * corrupted Mat will contain near-identical pixel data because the
+     * stride offset wraps by exactly one Mat row width every 3 rows.
+     *
+     * @return The detected actual stride in bytes, or 0 if no mismatch.
+     */
+    std::size_t detectStrideMismatch_(const cv::Mat& frame) const {
+        if (frame.channels() != 3 || frame.rows < 6 || frame.cols < 4) {
+            return 0;
+        }
+
+        const std::size_t nominal_step = static_cast<std::size_t>(frame.cols) * 3;
+        if (frame.step[0] != nominal_step) {
+            return 0;
+        }
+
+        const int third = frame.rows / 3;
+        int matches = 0;
+        const int samples = std::min(frame.cols, 32);
+
+        for (int x = 0; x < samples; ++x) {
+            const auto* row_a = frame.ptr<std::uint8_t>(0) + x * 3;
+            const auto* row_b = frame.ptr<std::uint8_t>(third) + x * 3;
+
+            if (std::abs(static_cast<int>(row_a[0]) - static_cast<int>(row_b[0])) < 4 &&
+                std::abs(static_cast<int>(row_a[1]) - static_cast<int>(row_b[1])) < 4 &&
+                std::abs(static_cast<int>(row_a[2]) - static_cast<int>(row_b[2])) < 4) {
+                ++matches;
+            }
+        }
+
+        if (matches > samples * 3 / 4) {
+            return static_cast<std::size_t>(frame.cols) * 4;
+        }
+
+        return 0;
+    }
+
+    void onFrame_(const cv::Mat& frame, const libcamera::ControlList&) {
         if (!frame_cb_ || frame.empty()) {
             return;
         }
@@ -106,27 +156,35 @@ private:
         fe.frame_id = next_frame_id_++;
         fe.t_capture = Clock::now();
 
-        if (frame.type() == CV_8UC1) {
+        if (frame.channels() == 1) {
             copyMatIntoFrameEvent(frame, fe, PixelFormat::Gray8);
             frame_cb_(fe);
             return;
         }
 
-        cv::Mat converted;
-        PixelFormat out_fmt = PixelFormat::Gray8;
-
-        if (frame.type() == CV_8UC3) {
-            converted = frame;
-            out_fmt = PixelFormat::BGR888;
-        } else if (frame.type() == CV_8UC4) {
-            cv::cvtColor(frame, converted, cv::COLOR_BGRA2BGR);
-            out_fmt = PixelFormat::BGR888;
-        } else {
-            cv::cvtColor(frame, converted, cv::COLOR_BGR2GRAY);
-            out_fmt = PixelFormat::Gray8;
+        // On the first frame, detect whether the FormatConverter NATIVE
+        // path delivered a Mat with incorrect stride.
+        if (!stride_checked_) {
+            stride_checked_ = true;
+            detected_stride_ = detectStrideMismatch_(frame);
+            if (detected_stride_ > 0) {
+                std::fprintf(stderr,
+                    "Libcamera2OpenCvCameraAdapter: detected ISP stride "
+                    "mismatch (nominal=%zu, actual=%zu); compensating\n",
+                    static_cast<std::size_t>(frame.step[0]),
+                    detected_stride_);
+            }
         }
 
-        copyMatIntoFrameEvent(converted, fe, out_fmt);
+        if (detected_stride_ > 0) {
+            cv::Mat fixed(frame.rows, frame.cols, frame.type(),
+                          const_cast<std::uint8_t*>(frame.data),
+                          detected_stride_);
+            copyMatIntoFrameEvent(fixed, fe, PixelFormat::BGR888);
+        } else {
+            copyMatIntoFrameEvent(frame, fe, PixelFormat::BGR888);
+        }
+
         frame_cb_(fe);
     }
 
@@ -137,6 +195,9 @@ private:
     FrameCallback frame_cb_{};
     bool running_{false};
     std::uint64_t next_frame_id_{1};
+
+    bool stride_checked_{false};
+    std::size_t detected_stride_{0};
 };
 #endif
 
