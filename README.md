@@ -22,6 +22,12 @@ This project implements an event-driven pipeline in which camera frames are deli
   <img src="media/model.jpeg" alt="System Model" width="750">
 </p>
 
+### Demo
+
+A short demonstration of the tracker running on hardware is available in the repository root:
+
+[`Demo Solar Tracker.mp4`](Demo%20Solar%20Tracker.mp4)
+
 ---
 
 <p align="center">
@@ -132,7 +138,7 @@ Development was organised through GitHub Milestones, Issues, Pull Requests, and 
   - Linux / Raspberry Pi execution
   - software-only path with simulated camera input
   - headless CLI application
-  - optional Qt GUI target
+  - Qt GUI target
 
 - **Safety-oriented actuation path**
   - actuator clamping
@@ -414,35 +420,13 @@ For a detailed bill of materials, see [docs/BOM.md](docs/BOM.md).
 
 ## Dependencies
 
-### Mandatory
-
-- CMake 3.16 or newer
-- C++17 compiler
-  - GCC
-  - Clang
-  - MSVC
-
-### Optional
-
-- **libcamera** — enables the Raspberry Pi camera backend.
-- **Qt5 Widgets / Charts** — enables the optional Qt GUI target.
-- **OpenCV** — enables optional image-conversion and viewer support where available.
-
-### Linux Packages
-
-#### Minimal build tools
+The following packages are required on Raspberry Pi OS (Debian Trixie, 64-bit):
 
 ```bash
 sudo apt update
-sudo apt install -y build-essential cmake git pkg-config
-```
-
-#### Optional packages
-
-```bash
-sudo apt install -y libcamera-dev
+sudo apt install -y build-essential cmake git pkg-config ninja-build
+sudo apt install -y libcamera-dev libopencv-dev libturbojpeg0-dev libgpiod-dev
 sudo apt install -y qtbase5-dev qtcharts5-dev qt5-qmake
-sudo apt install -y libopencv-dev
 sudo apt install -y doxygen graphviz
 ```
 
@@ -452,14 +436,12 @@ For a complete dependency reference, see [docs/DEPENDENCIES.md](docs/DEPENDENCIE
 
 ## Cloning
 
-Clone the repository with all submodules:
-
 ```bash
 git clone --recurse-submodules https://github.com/Real-Time-Stewart-Solar-Tracker/Solar-Stewart-Tracker.git
 cd Solar-Stewart-Tracker
 ```
 
-If you already cloned without submodules, initialise them with:
+If you already cloned without submodules:
 
 ```bash
 git submodule update --init --recursive
@@ -467,111 +449,52 @@ git submodule update --init --recursive
 
 > **Note:** The GitHub auto-generated source ZIP does not include submodule contents. Always clone with `--recurse-submodules`.
 
-### External Repositories Used by This Project
+### Submodules
 
-The repository includes these submodules under `external/`:
+This project depends on two external submodules under `external/`:
 
-- `external/libcamera2opencv` → https://github.com/berndporr/libcamera2opencv.git
-- `external/libgpiod_event_demo` → https://github.com/berndporr/libgpiod_event_demo.git
+- [`external/libcamera2opencv`](https://github.com/berndporr/libcamera2opencv) — libcamera to OpenCV bridge for the camera backend
+- [`external/libgpiod_event_demo`](https://github.com/berndporr/libgpiod_event_demo) — event-driven GPIO wrapper for ADS1115 and MPU6050 interrupt handling
+
+Both are required for a successful build. If either directory is empty after cloning, run `git submodule update --init --recursive`.
 
 ---
 
 ## Building
 
-### Linux / Raspberry Pi OS
-
-#### Configure
-
 ```bash
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-```
-
-#### Build
-
-```bash
 cmake --build build -j
 ```
 
-### Windows
-
-#### Configure
-
-```bash
-cmake -S . -B build
-```
-
-#### Build
-
-```bash
-cmake --build build --config Release
-```
-
-### Optional: Disable OpenCV Auto-Detection
-
-```bash
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DSOLAR_TRY_OPENCV=OFF
-```
-
-### Optional: Disable libcamera Auto-Detection
-
-```bash
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DSOLAR_TRY_LIBCAMERA=OFF
-```
-
-### Optional: Enable Hardware-Adjacent Tests
-
-```bash
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DSOLAR_ENABLE_HW_TESTS=ON
-```
-
-For a full build and run reference, see [docs/build_and_run.md](docs/build_and_run.md).
+This builds all targets including the CLI application, the Qt GUI, and all tests. No hardware needs to be connected — only the development libraries installed via `apt`.
 
 ---
 
 ## Running
 
-### Core CLI Application
-
-#### Linux
+### Headless CLI
 
 ```bash
 ./build/solar_tracker
 ```
 
-#### Typical Windows Location
-
-```text
-build\Release\solar_tracker.exe
-```
-
-### Software-Only Mode
-
-The software-only path uses a simulated camera backend and a non-hardware actuator path for development and testing without the physical platform.
-
-### Optional Qt GUI Application
-
-Built only when Qt support is enabled and found:
+### Qt GUI (full application with live preview and manual controls)
 
 ```bash
 ./build/src/qt/solar_tracker_qt
-```
-
-#### Typical Windows Location
-
-```text
-build\Release\solar_tracker_qt.exe
 ```
 
 ### Hardware Mode
 
 Hardware execution requires:
 
-- libcamera support for the live camera path
+- libcamera-compatible camera connected
 - I2C enabled on the host
-- PCA9685 connected correctly
-- servo power and wiring connected correctly
+- PCA9685 and servos connected and powered
+- external 5–6V servo power supply
 
-The system enters `FAULT` if required startup steps fail or mandatory hardware is unavailable.
+The system enters `FAULT` if required hardware is unavailable at startup.
 
 ### Runtime Latency Capture
 
@@ -580,11 +503,7 @@ mkdir -p artefacts
 SOLAR_LATENCY_CSV=artefacts/latency.csv ./build/solar_tracker
 ```
 
-This writes latency data to:
-
-```text
-artefacts/latency.csv
-```
+Type `quit` and press Enter to stop cleanly. Latency data is written to `artefacts/latency.csv` on shutdown.
 
 For reproducibility steps and environment setup, see [docs/REPRODUCIBILITY.md](docs/REPRODUCIBILITY.md).
 
@@ -592,32 +511,14 @@ For reproducibility steps and environment setup, see [docs/REPRODUCIBILITY.md](d
 
 ## Running Tests
 
-This project integrates tests with **CTest**.
-
-### Run All Registered Tests
-
-#### Linux
-
 ```bash
-ctest --test-dir build --output-on-failure -LE hw
+ctest --test-dir build --output-on-failure
 ```
 
-#### Windows
-
-```bash
-ctest --test-dir build -C Release --output-on-failure
-```
-
-### Convenience Script
+Or via the convenience script:
 
 ```bash
 ./scripts/test_core.sh
-```
-
-### Hardware-Adjacent Test Script
-
-```bash
-./scripts/test_pi_hw.sh
 ```
 
 ### Included Automated Test Areas
