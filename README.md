@@ -25,7 +25,7 @@ This project implements an event-driven pipeline in which camera frames are deli
 ### Demo
 
 A short demonstration of the tracker running on hardware is available in the repository root:
-
+https://www.youtube.com/shorts/J-tgFS92vjE
 [`Demo Solar Tracker.mp4`](Demo%20Solar%20Tracker.mp4)
 
 ---
