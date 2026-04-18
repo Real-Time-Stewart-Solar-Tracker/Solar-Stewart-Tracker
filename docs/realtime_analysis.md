@@ -27,7 +27,7 @@ File descriptors:
 
 - signalfd → SIGINT / SIGQUIT / SIGHUP / SIGTERM → clean shutdown  
 - timerfd (CLOCK_MONOTONIC) → configurable tick (default 30 Hz) → CLI servicing  
-- stdin (dup’d) → terminal input  
+- stdin (dup'd) → terminal input  
 
 The loop remains blocked in the kernel until an event occurs.
 
@@ -48,14 +48,25 @@ The push_latest() policy ensures consumers process the most recent data when und
 
 ## 4. Worker Threads
 
-SystemManager owns two worker threads.
+SystemManager owns two worker threads. A third dedicated thread is owned by GuiManualDispatcher.
 
 Control thread (controlLoop_):
 
 - blocks on frame_q_.wait_pop()  
-- processes frames through SunTracker and Controller in automatic modes  
-- builds manual setpoints from stored input state in manual mode  
-- performs all command generation  
+- processes frames through SunTracker and Controller in automatic modes (SEARCHING / TRACKING)  
+- drains frames without processing in MANUAL and FAULT states  
+- is not involved in manual command generation  
+
+GuiManualDispatcher thread:
+
+- blocks on a bounded freshest-data queue (capacity 1)  
+- wakes immediately when setManualSetpoint() is called  
+- dispatches directly to Kinematics3RRS, independent of camera-frame timing  
+
+Pot-manual path (no dedicated thread):
+
+- ADS1115 ALERT/RDY GPIO edge fires onManualPotSample_() in the ADS1115 callback thread  
+- dispatches directly to Kinematics3RRS from that callback context  
 
 Actuator thread (actuatorLoop_):
 
@@ -75,7 +86,7 @@ Camera:
 Manual input:
 
 - ADS1115ManualInput uses ALERT/RDY GPIO edge  
-- callback updates stored manual state only  
+- callback dispatches directly to Kinematics3RRS in pot-manual mode  
 
 IMU:
 
@@ -100,19 +111,32 @@ Frame callback
 → ActuatorManager  
 → ServoDriver  
 
-Manual path:
+Pot-manual path:
 
-GUI valueChanged / ADS1115 callback  
-→ store latest manual state  
-→ control thread wait_pop()  
+ADS1115 ALERT/RDY GPIO edge  
+→ onManualPotSample_() in ADS1115 callback thread  
 → ManualImuCoordinator builds manual setpoint  
+→ applyImuCorrection  
 → Kinematics3RRS  
 → cmd_q_.push_latest(...)  
 → actuator thread wait_pop()  
 → ActuatorManager  
 → ServoDriver  
 
-Both paths are processed through the same control and actuation stages. The control thread maintains timing ownership in all modes.
+GUI-manual path:
+
+setManualSetpoint() called (any thread)  
+→ GuiManualDispatcher queue push_latest  
+→ GuiManualDispatcher worker thread wakes immediately  
+→ ManualImuCoordinator builds manual setpoint  
+→ applyImuCorrection  
+→ Kinematics3RRS  
+→ cmd_q_.push_latest(...)  
+→ actuator thread wait_pop()  
+→ ActuatorManager  
+→ ServoDriver  
+
+All three paths share the downstream Kinematics → ActuatorManager → ServoDriver stages. The control thread handles only the automatic path. Both manual paths are independently event-driven.
 
 ---
 
@@ -120,7 +144,7 @@ Both paths are processed through the same control and actuation stages. The cont
 
 Qt timers are used only for UI refresh and visualisation.
 
-GUI interactions update stored manual state via valueChanged. The GUI does not generate actuator commands. Continuous command generation remains in the control thread.
+GUI slider interactions call setManualSetpoint(), which pushes to the GuiManualDispatcher queue. The dispatcher's dedicated worker thread wakes immediately and dispatches directly to Kinematics3RRS. Qt timers are never used as a control timing source.
 
 ---
 
@@ -138,6 +162,7 @@ stop() performs:
 
 - camera shutdown  
 - backend shutdown  
+- GuiManualDispatcher shutdown  
 - queue termination  
 - worker thread join  
 - actuator neutral/park handling  
@@ -151,15 +176,15 @@ Queues notify blocked threads during shutdown, ensuring clean exit.
 
 The runtime follows a consistent event-driven execution model:
 
-- all worker threads block on kernel-backed primitives (poll, condition_variable)  
+- all worker threads block on blocking primitives (poll, condition_variable)
 - all wakeups originate from external events (file descriptors, queue notifications, GPIO interrupts)  
 - no component introduces independent timing loops or polling  
 
-Control execution is centralised in a single thread. All inputs are reduced to state and processed within that thread before actuation.
+The automatic path is processed by a single control thread. Both manual paths are independently event-driven: the pot path dispatches from the ADS1115 callback thread, and the GUI path dispatches from the GuiManualDispatcher worker thread. All three paths converge at Kinematics3RRS before actuation.
 
 This structure ensures:
 
-- a single, deterministic control path  
-- consistent behaviour across automatic and manual modes  
+- separation between automatic, pot-manual, and GUI-manual timing  
+- no camera-frame dependency in either manual path  
 - separation between realtime processing and UI interaction  
-- explicit ownership of timing and data flow  
+- explicit ownership of timing and data flow

@@ -14,7 +14,7 @@ All latency measurements and hardware-smoke tests were captured on the following
 |---|---|
 | Hardware | Raspberry Pi 5 Model B, 4 GB RAM |
 | CPU | Broadcom BCM2712, Cortex-A76, 4-core, 2.4 GHz |
-| Operating system | Raspberry Pi OS Bookworm (Debian 12), 64-bit (aarch64) |
+| Operating system | Raspberry Pi OS (Debian Trixie), 64-bit (aarch64) |
 | Kernel | Linux 6.6.51+rpt-rpi-2712 (aarch64) |
 | Compiler | GCC 12.2.0 (aarch64-linux-gnu) |
 | libgpiod | 2.2.2 (built from source) |

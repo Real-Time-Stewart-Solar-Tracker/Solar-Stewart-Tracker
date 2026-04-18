@@ -13,7 +13,7 @@ This document defines the runtime behaviour of the system as a state machine. It
 | NEUTRAL | Transitional safe positioning state | Configured startup park applied |
 | SEARCHING | Target not confidently detected | Continuous automatic processing with safe behaviour |
 | TRACKING | Target detected with sufficient confidence | Normal closed-loop automatic updates |
-| MANUAL | User controls setpoint | Manual target is applied continuously through the control thread |
+| MANUAL | User controls setpoint | Manual target dispatched via dedicated pot or GUI path |
 | STOPPING | Shutdown in progress | Controlled stop sequence |
 | FAULT | Failure state | Outputs stopped or held safe |
 

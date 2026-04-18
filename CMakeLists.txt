@@ -98,8 +98,9 @@ endif()
 # avoids that problem entirely.
 set(SOLAR_HAVE_LIBCAM2OPENCV 0)
 set(LIBCAM2OPENCV_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/libcamera2opencv")
-if(SOLAR_HAVE_LIBCAMERA AND EXISTS "${LIBCAM2OPENCV_DIR}/libcam2opencv.cpp")
-    add_library(cam2opencv STATIC "${LIBCAM2OPENCV_DIR}/libcam2opencv.cpp")
+file(GLOB LIBCAM2OPENCV_SOURCES "${LIBCAM2OPENCV_DIR}/*.cpp")
+if(SOLAR_HAVE_LIBCAMERA AND LIBCAM2OPENCV_SOURCES)
+    add_library(cam2opencv STATIC ${LIBCAM2OPENCV_SOURCES})
     target_include_directories(cam2opencv
         PUBLIC
             "${LIBCAM2OPENCV_DIR}"
@@ -110,6 +111,7 @@ if(SOLAR_HAVE_LIBCAMERA AND EXISTS "${LIBCAM2OPENCV_DIR}/libcam2opencv.cpp")
         PUBLIC
             PkgConfig::LIBCAMERA
             ${OpenCV_LIBS}
+            turbojpeg
     )
     set(SOLAR_HAVE_LIBCAM2OPENCV 1)
     message(STATUS "external/libcamera2opencv found")
