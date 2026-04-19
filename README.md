@@ -68,10 +68,15 @@ https://www.youtube.com/shorts/J-tgFS92vjE
 
 ## Social Media
 
-We actively document the development, testing, and realtime performance of the **Solar Stewart Tracker** to promote transparency, reproducibility, and engagement with the engineering community.
+We actively document the development, testing, and realtime performance of the **Solar Stewart Tracker**.
 
-📌 **TikTok**
+The project is documented and published across the following platforms.
+
+📌 **TikTok** — realtime tracking demos, hardware setup, and development clips\
 https://www.tiktok.com/@sunlock.lab_2
+
+📌 **Hackster.io** — full project write-up, hardware overview, and build guide\
+https://www.hackster.io/fadihalteh21/real-time-solar-stewart-tracker-8ed4bb
 
 Content includes:
 
